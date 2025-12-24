@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Open Civil | Transparent Structural Analysis</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+
+    <nav>
+        <div class="container nav-container">
+            <div class="logo">
+                <i data-lucide="box" class="logo-icon"></i> 
+                <span>Open Civil</span>
+            </div>
+            <ul class="nav-links">
+                <li><a href="#features">Features</a></li>
+                <li><a href="#specs">Tech Specs</a></li>
+                <li><a href="#data">Open Data</a></li>
+                <li><a href="#engine">Engine</a></li>
+                <li><a href="#docs">Docs</a></li>
+            </ul>
+            <div class="nav-actions">
+                <a href="https://github.com/opencivil/metufire" class="github-link"><i data-lucide="github"></i> GitHub</a>
+                <a href="#" class="btn btn-primary">Download v0.35</a>
+            </div>
+        </div>
+    </nav>
+
+    <header class="hero">
+        <div class="grid-background"></div>
+        <div class="container hero-content">
+            <div class="hero-text">
+                <div class="creator-tag">Created by Shaikh Ahmed Azad</div>
+                <div class="badges">
+                    <span class="badge">Student Project</span>
+                    <span class="badge badge-yellow">Open Source</span>
+                </div>
+                <h1>Structural Analysis.<br><span class="text-transparent">Transparent.</span></h1>
+                <p class="hero-sub">
+                    Bridging the gap between simplified 2D analysis and black-box commercial software. 
+                    <strong>Open Civil</strong> provides a fully transparent workspace to model, visualize, and inspect the physics of 3D structures.
+                </p>
+                <div class="hero-buttons">
+                    <a href="#" class="btn btn-dark"><i data-lucide="download"></i> Download for Windows</a>
+                    <a href="#" class="btn btn-outline"><i data-lucide="code"></i> View Source</a>
+                </div>
+                <div class="tech-stack">
+                    <span><span class="dot green"></span> Python 3.10+</span>
+                    <span><span class="dot blue"></span> PyQt6 & OpenGL</span>
+                    <span><span class="dot yellow"></span> Custom Solver</span>
+                </div>
+                <p class="disclaimer">* Note: This is an educational project for learning and experimenting. Not intended for professional commercial use.</p>
+            </div>
+            
+            <div class="hero-image-wrapper">
+                <div class="window-frame">
+                    <img src="images/hero-main.png" alt="Open Civil Main Interface" class="app-screenshot"> 
+                </div>
+                <div class="floating-card">
+                    <div class="card-header">
+                        <span>Matrix Spy [k]</span>
+                        <div class="dots"><span></span><span></span><span></span></div>
+                    </div>
+                    <div class="matrix-grid">
+                        <span class="num">1.500e+9</span> <span class="dim">0.000</span> <span class="dim">0.000</span>
+                        <span class="dim">0.000</span> <span class="num">1.721e+5</span> <span class="dim">0.000</span>
+                        <span class="dim">0.000</span> <span class="dim">0.000</span> <span class="num">9.356e+5</span>
+                        <div class="matrix-label">... 12x12 Stiffness Matrix ...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <section id="workflow" class="section">
+        <div class="container text-center">
+            <div class="section-header">
+                <h2>Workflow & Technology</h2>
+                <p>Built on a modular architecture that separates the Core (Math/Physics) from the App (Visualization/UI).</p>
+            </div>
+            <div class="workflow-image-container">
+                <img src="images/workflow.png" alt="Analysis Workflow Diagram" class="workflow-img">
+            </div>
+        </div>
+    </section>
+
+    <section id="features" class="section bg-light">
+        <div class="container">
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="icon-box blue"><i data-lucide="box"></i></div>
+                    <h3>Educational Modeling</h3>
+                    <p>Render beams as physical shapes (I-beams, T-beams). Supports rigid end offsets, member releases, and cardinal insertion points.</p>
+                    <div class="card-image-frame">
+                        <img src="images/feature-1.png" alt="3D Modeling" class="feature-img">
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="icon-box green"><i data-lucide="eye"></i></div>
+                    <h3>The "Glass Box" Approach</h3>
+                    <p>Inspect the raw 12x12 Stiffness Matrix [k], Transformation Matrix [T], and FEF vectors for any element. Perfect for education and verification.</p>
+                    <div class="card-image-frame">
+                        <img src="images/feature-2.png" alt="Matrix Spy" class="feature-img">
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="icon-box orange"><i data-lucide="activity"></i></div>
+                    <h3>Interactive Graphics</h3>
+                    <p>CAD-like snapping, box selection, and smooth 3D orbiting. Visualizes forces and moments with auto-scaling 3D arrows.</p>
+                    <div class="card-image-frame">
+                        <img src="images/feature-3.png" alt="Interactive Graphics" class="feature-img">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="specs" class="section">
+        <div class="container">
+            <div class="specs-box">
+                <div class="spec-column">
+                    <h4><i data-lucide="monitor"></i> Visualization Engine</h4>
+                    <ul>
+                        <li><strong>Backend:</strong> PyQt6.QtOpenGL (GLViewWidget)</li>
+                        <li><strong>Camera:</strong> 3D Orbiting with Pan/Zoom</li>
+                        <li><strong>Rendering:</strong> Real-time Extruded Meshes</li>
+                        <li><strong>Selection:</strong> Ray-casting & Box Select</li>
+                    </ul>
+                </div>
+                <div class="spec-column">
+                    <h4><i data-lucide="cpu"></i> Analysis Kernel</h4>
+                    <ul>
+                        <li><strong>Theory:</strong> Timoshenko Beam (Shear Deformation)</li>
+                        <li><strong>Solver:</strong> Optimized Linear Solver</li>
+                        <li><strong>Condensation:</strong> Static condensation for releases</li>
+                        <li><strong>Format:</strong> JSON-based .mf file system</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="data" class="section bg-dark-slate">
+        <div class="container split-layout">
+            <div class="text-content">
+                <h2 class="text-white">Human-Readable Data Format</h2>
+                <p class="text-gray">No proprietary binary blobs. Open Civil uses simple, transparent JSON files (.mf) that you can read, edit, or generate with Python scripts.</p>
+                <ul class="check-list dark-mode">
+                    <li><i data-lucide="check"></i> <strong>Easy Parsing:</strong> Load models directly into Python, MATLAB, or Excel.</li>
+                    <li><i data-lucide="check"></i> <strong>Transparent Structure:</strong> Every node, element, and load is clearly defined.</li>
+                    <li><i data-lucide="check"></i> <strong>Future Proof:</strong> Your data belongs to you, forever accessible.</li>
+                </ul>
+            </div>
+            
+            <div class="code-content">
+                <div class="code-window">
+                    <div class="window-bar">
+                        <span class="file-name"><i data-lucide="file-json"></i> test1.mf</span> 
+                        <div class="dots"><span></span><span></span><span></span></div>
+                    </div>
+<pre><code class="language-json"><span class="p">{</span>
+  <span class="k">"info"</span><span class="p">:</span> <span class="p">{</span> <span class="k">"name"</span><span class="p">:</span> <span class="s">"Project 1"</span><span class="p">,</span> <span class="k">"units"</span><span class="p">:</span> <span class="s">"kN, m, C"</span> <span class="p">},</span>
+  <span class="k">"materials"</span><span class="p">:</span> <span class="p">[</span>
+    <span class="p">{</span> <span class="k">"name"</span><span class="p">:</span> <span class="s">"Steel"</span><span class="p">,</span> <span class="k">"E"</span><span class="p">:</span> <span class="n">2.0e+11</span><span class="p">,</span> <span class="k">"rho"</span><span class="p">:</span> <span class="n">7850.0</span> <span class="p">}</span>
+  <span class="p">],</span>
+  <span class="k">"elements"</span><span class="p">:</span> <span class="p">[</span>
+    <span class="p">{</span>
+      <span class="k">"id"</span><span class="p">:</span> <span class="n">1</span><span class="p">,</span>
+      <span class="k">"n1_id"</span><span class="p">:</span> <span class="n">1</span><span class="p">,</span> <span class="k">"n2_id"</span><span class="p">:</span> <span class="n">2</span><span class="p">,</span>
+      <span class="k">"sec_name"</span><span class="p">:</span> <span class="s">"IPE300"</span><span class="p">,</span>
+      <span class="k">"rel_i"</span><span class="p">:</span> <span class="p">[</span><span class="b">false</span><span class="p">,</span> <span class="b">false</span><span class="p">,</span> <span class="b">false</span><span class="p">,</span> <span class="b">false</span><span class="p">,</span> <span class="b">false</span><span class="p">,</span> <span class="b">false</span><span class="p">]</span>
+    <span class="p">}</span>
+  <span class="p">]</span>
+<span class="p">}</span></code></pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="engine" class="section bg-black">
+        <div class="container split-layout reverse-mobile">
+            <div class="code-content">
+                <div class="code-window border-blue">
+                    <div class="window-bar">
+                        <span class="file-name"><i data-lucide="file-code"></i> core/solver_kernel.py</span> 
+                        <div class="dots"><span></span><span></span><span></span></div>
+                    </div>
+<pre><code class="language-python">
+<span class="k">class</span> <span class="c">LinearSolver</span>:
+    <span class="k">def</span> <span class="f">solve</span>(<span class="s">self</span>):
+        <span class="com"># Executes the linear algebra solution: K_ff * U_f = P_f</span>
+        <span class="b">print</span>(<span class="str">"Solver: Applying Boundary Conditions..."</span>)
+        
+        <span class="com"># 1. Partition the System (Sparse CSC)</span>
+        K_csc = <span class="s">self</span>.K.tocsc()
+        K_ff = K_csc[is_free, :][:, is_free]
+        P_f = <span class="s">self</span>.P[is_free]
+
+        <span class="com"># 2. Solve (The "Big Math")</span>
+        <span class="k">try</span>:
+            U_f = solve_sparse(K_ff, P_f) <span class="com"># Optimized Solver</span>
+        <span class="k">except</span> (<span class="c">RuntimeError</span>, <span class="c">ValueError</span>) <span class="k">as</span> e:
+            <span class="com"># ERROR CHECK E301: Singular Matrix</span>
+            <span class="k">raise</span> <span class="c">SolverException</span>(<span class="str">"E301"</span>, <span class="b">str</span>(e))
+
+        <span class="k">return</span> U_f, <span class="s">self</span>.Reactions
+</code></pre>
+                </div>
+            </div>
+
+            <div class="text-content">
+                <h2 class="text-white">The Analysis Engine</h2>
+                <p class="text-gray">A standalone, high-performance Python engine that strictly separates physics from UI. </p>
+                
+                <div class="feature-row">
+                    <div class="icon-box-small"><i data-lucide="code-2"></i></div>
+                    <div>
+                        <h4 class="text-white">Mathematical Formulation</h4>
+                        <p class="text-gray-sm">Implements Timoshenko Beam Theory accounting for shear deformation. Accurate for both slender and deep beams.</p>
+                    </div>
+                </div>
+                
+                <div class="feature-row">
+                    <div class="icon-box-small"><i data-lucide="grid"></i></div>
+                    <div>
+                        <h4 class="text-white">Advanced Matrix Operations</h4>
+                        <p class="text-gray-sm">Static condensation for member releases. Transformation matrices for rigid zones, offsets, and cardinal insertion points.</p>
+                    </div>
+                </div>
+
+                <div class="feature-row">
+                    <div class="icon-box-small"><i data-lucide="cpu"></i></div>
+                    <div>
+                        <h4 class="text-white">Smart Error Handling</h4>
+                        <p class="text-gray-sm">Diagnoses singular matrices (E301), zero-length elements (E201), and missing properties instead of just crashing.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section">
+        <div class="container">
+            <div class="cta-box">
+                <div class="cta-left">
+                    <h2>Ready to start analyzing?</h2>
+                    <p>Open Civil is open-source and free to use. Contribute to the project or use it for your research.</p>
+                    <div class="command-box">
+                        <code>git clone https://github.com/opencivil/metufire.git</code>
+                        <button class="copy-btn"><i data-lucide="copy"></i></button>
+                    </div>
+                    <div class="cta-buttons">
+                        <a href="#" class="btn btn-white"><i data-lucide="github"></i> View on GitHub</a>
+                        <a href="#" class="btn btn-outline-white">Read Documentation</a>
+                    </div>
+                </div>
+                <div class="cta-right">
+                    <h4>>_ System Requirements</h4>
+                    <ul class="req-list">
+                        <li>OS: Windows, macOS, or Linux</li>
+                        <li>Python 3.10 or higher</li>
+                        <li>RAM: 4GB Minimum (8GB Rec)</li>
+                        <li>OpenGL 3.3+ Compatible GPU</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container text-center">
+            <p>&copy; 2025 Open Civil. Created by Shaikh Ahmed Azad.</p>
+        </div>
+    </footer>
+
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+</html>
