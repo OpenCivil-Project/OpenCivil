@@ -17,14 +17,17 @@ It provides a **fully transparent workspace** where students can model 3D struct
     * View the raw **12x12 Stiffness Matrix [k]** for any element.
     * Inspect **Transformation Matrices [T]** and Fixed End Force vectors.
     * Trace the solver's logic step-by-step.
+
 * **Advanced Structural Modeling**:
     * Full **3D Timoshenko Beam Theory** (Shear Deformation).
     * **Rigid End Offsets** & Cardinal Insertion Points.
     * **Member Releases** (Moment/Shear) using static condensation.
+
 * **Interactive Visualization**:
     * Fast OpenGL rendering (Arcball rotation, Pan, Zoom).
     * True-to-scale extruded shapes (I-Beams, T-Beams, Rectangular).
     * Visual "Matrix Spy" tool for debugging models.
+
 * **Transparent Data**:
     * Saves projects as human-readable **JSON (.mf)** files.
     * Easy to parse with Python, MATLAB, or Excel for research.
@@ -36,81 +39,76 @@ It provides a **fully transparent workspace** where students can model 3D struct
 * **Graphics**: PyOpenGL / PyQtGraph
 * **Math Kernel**: NumPy & SciPy (Sparse Linear Algebra)
 
-
 ## 🚀 Installation & Setup
 
 ### Option 1: Download Installer (Windows)
+
 Download the latest `.exe` from the [Releases Page](https://github.com/ShaikhAhmedAzad/OpenCivil/releases/latest).
 
 ### Option 2: Run from Source (Developers)
 
 **1. Clone the Repository**
+
 ```bash
-git clone [https://github.com/ShaikhAhmedAzad/OpenCivil.git](https://github.com/ShaikhAhmedAzad/OpenCivil.git)
+git clone https://github.com/ShaikhAhmedAzad/OpenCivil.git
 cd OpenCivil
-2. Create a Virtual Environment (Recommended)
+```
 
-Bash
+**2. Create a Virtual Environment (Recommended)**
 
+```bash
 python -m venv venv
+
 # Windows
 venv\Scripts\activate
+
 # Mac/Linux
 source venv/bin/activate
-3. Install Dependencies
+```
 
-Bash
+**3. Install Dependencies**
 
-pip install numpy scipy PyQt6 pyopengl pyqtgraph
-4. Run the App
+```bash
+pip install -r requirements.txt
+```
 
-Bash
+**4. Run the App**
 
+```bash
 python main.py
+```
 
-📖 Usage Guide
-Define Grid: Start a new model and define your X/Y/Z grid lines.
+## 📖 Usage Guide
 
-Materials & Sections: Go to Define > Section Properties to create I-beams or Concrete Rectangles.
+1. **Define Grid**: Start a new model and define your X/Y/Z grid lines.
+2. **Materials & Sections**: Go to Define > Section Properties to create I-beams or Concrete Rectangles.
+3. **Draw**: Use the Draw Frame tool to click-and-drag beams between grid points.
+4. **Assign**: Select members to assign Loads, Releases, or Supports.
+5. **Analyze**: Press F5 or go to Analyze > Run Analysis.
+6. **Inspect**: Right-click any element to see its "Matrix Spy" or Free Body Diagram.
 
-Draw: Use the Draw Frame tool to click-and-drag beams between grid points.
+## 🤝 Contributing
 
-Assign: Select members to assign Loads, Releases, or Supports.
-
-Analyze: Press F5 or go to Analyze > Run Analysis.
-
-Inspect: Right-click any element to see its "Matrix Spy" or Free Body Diagram.
-
-
-🤝 Contributing
 This is a student project created for educational purposes. Contributions, bug reports, and pull requests are welcome!
 
-Fork the Project
+1. Fork the Project
+2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the Branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
-Create your Feature Branch (git checkout -b feature/AmazingFeature)
+## 📄 License
 
-Commit your Changes (git commit -m 'Add some AmazingFeature')
+This project is open source and available for educational use.
 
-Push to the Branch (git push origin feature/AmazingFeature)
+## 👨‍💻 Author
 
-Open a Pull Request
+**Shaikh Ahmed Azad**  
+Civil Engineering Student | METU  
+[GitHub Profile](https://github.com/ShaikhAhmedAzad)
 
+---
 
-👨‍💻 Author
-Shaikh Ahmed Azad Civil Engineering Student | METU
+### 🎯 Next Steps
 
-GitHub Profile
-
-
-### What to do now:
-1.  **Upload this file** to your repository (drag and drop it just like the HTML/CSS).
-2.  **Add a `requirements.txt`**: Create a file named `requirements.txt` and paste these 5 lines so people know what libraries to install:
-    ```text
-    numpy
-    scipy
-    PyQt6
-    pyopengl
-    pyqtgraph
-    matplotlib
-    ```
-3.  **Commit changes.**
+Ready to get started? Check out the [Installation Guide](#-installation--setup) above or visit the [Wiki](https://github.com/ShaikhAhmedAzad/OpenCivil/wiki) for detailed tutorials.
