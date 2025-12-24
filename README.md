@@ -109,6 +109,3 @@ Civil Engineering Student | METU
 
 ---
 
-### 🎯 Next Steps
-
-Ready to get started? Check out the [Installation Guide](#-installation--setup) above or visit the [Wiki](https://github.com/ShaikhAhmedAzad/OpenCivil/wiki) for detailed tutorials.
