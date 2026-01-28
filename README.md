@@ -1,111 +1,73 @@
-# Open Civil
+# Welcome to your Lovable project
 
-Open Civil is an open-source, educational structural analysis software designed to bridge the gap between simplified 2D textbook problems and complex commercial "black box" software. 
+## Project info
 
-It provides a **fully transparent workspace** where students can model 3D structures, visualize internal forces, and inspect the underlying mathematical matrices (Stiffness, Transformation, etc.) in real-time.
+**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
 
-## Screenshots
+## How can I edit this code?
 
-| 3D Modeling | Analysis Results |
-|:---:|:---:|
-| <img src="images/hero-main.png" width="400"> | <img src="images/feature-3.png" width="400"> |
-| *Real-time 3D Extrusions* | *Nodal deformations & Fixed end forces* |
+There are several ways of editing your application.
 
-## Key Features
+**Use Lovable**
 
-* **Educational "Glass Box" Engine**:
-    * View the raw **12x12 Stiffness Matrix [k]** for any element.
-    * Inspect **Transformation Matrices [T]** and Fixed End Force vectors.
-    * Trace the solver's logic step-by-step.
+Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
 
-* **Advanced Structural Modeling**:
-    * Full **3D Timoshenko Beam Theory** (Shear Deformation).
-    * **Rigid End Offsets** & Cardinal Insertion Points.
-    * **Member Releases** (Moment/Shear) using static condensation.
+Changes made via Lovable will be committed automatically to this repo.
 
-* **Interactive Visualization**:
-    * Fast OpenGL rendering (Arcball rotation, Pan, Zoom).
-    * True-to-scale extruded shapes (I-Beams, T-Beams, Rectangular).
-    * Visual "Matrix Spy" tool for debugging models.
+**Use your preferred IDE**
 
-* **Transparent Data**:
-    * Saves projects as human-readable **JSON (.mf)** files.
-    * Easy to parse with Python, MATLAB, or Excel for research.
+If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
 
-## Tech Stack
+The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
 
-* **Language**: Python 3.10+
-* **GUI Framework**: PyQt6
-* **Graphics**: PyOpenGL / PyQtGraph
-* **Math Kernel**: NumPy & SciPy (Sparse Linear Algebra)
+Follow these steps:
 
-## Installation & Setup
+```sh
+# Step 1: Clone the repository using the project's Git URL.
+git clone <YOUR_GIT_URL>
 
-### Option 1: Download Installer (Windows)
+# Step 2: Navigate to the project directory.
+cd <YOUR_PROJECT_NAME>
 
-Download the latest `.exe` from the [Releases Page](https://github.com/ShaikhAhmedAzad/OpenCivil/releases/latest).
+# Step 3: Install the necessary dependencies.
+npm i
 
-### Option 2: Run from Source (Developers)
-
-**1. Clone the Repository**
-
-```bash
-git clone https://github.com/ShaikhAhmedAzad/OpenCivil.git
-cd OpenCivil
+# Step 4: Start the development server with auto-reloading and an instant preview.
+npm run dev
 ```
 
-**2. Create a Virtual Environment (Recommended)**
+**Edit a file directly in GitHub**
 
-```bash
-python -m venv venv
+- Navigate to the desired file(s).
+- Click the "Edit" button (pencil icon) at the top right of the file view.
+- Make your changes and commit the changes.
 
-# Windows
-venv\Scripts\activate
+**Use GitHub Codespaces**
 
-# Mac/Linux
-source venv/bin/activate
-```
+- Navigate to the main page of your repository.
+- Click on the "Code" button (green button) near the top right.
+- Select the "Codespaces" tab.
+- Click on "New codespace" to launch a new Codespace environment.
+- Edit files directly within the Codespace and commit and push your changes once you're done.
 
-**3. Install Dependencies**
+## What technologies are used for this project?
 
-```bash
-pip install -r requirements.txt
-```
+This project is built with:
 
-**4. Run the App**
+- Vite
+- TypeScript
+- React
+- shadcn-ui
+- Tailwind CSS
 
-```bash
-python main.py
-```
+## How can I deploy this project?
 
-## Usage Guide
+Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
 
-1. **Define Grid**: Start a new model and define your X/Y/Z grid lines.
-2. **Materials & Sections**: Go to Define > Section Properties to create I-beams or Concrete Rectangles.
-3. **Draw**: Use the Draw Frame tool to click-and-drag beams between grid points.
-4. **Assign**: Select members to assign Loads, Releases, or Supports.
-5. **Analyze**: Press F5 or go to Analyze > Run Analysis.
-6. **Inspect**: Right-click any element to see its "Matrix Spy" or Free Body Diagram.
+## Can I connect a custom domain to my Lovable project?
 
-## 🤝 Contributing
+Yes, you can!
 
-This is a student project created for educational purposes. Contributions, bug reports, and pull requests are welcome!
+To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
 
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-## License
-
-This project is open-source and available for educational purposes.
-
-## Author
-
-**Shaikh Ahmed Azad**  
-Civil Engineering Student | METU  
-[GitHub Profile](https://github.com/ShaikhAhmedAzad)
-
----
-
+Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
