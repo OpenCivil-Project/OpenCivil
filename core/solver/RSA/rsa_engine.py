@@ -29,7 +29,7 @@ class RSAEngine:
         den = (1.0 - r**2)**2 + 4.0 * zeta**2 * r * (1.0 + r)**2
         return num / den if den != 0.0 else 1.0
     
-    def run(self, function_name="FUNC1", direction="X", modal_comb="SRSS"):
+    def run(self, function_name="FUNC1", direction="X", modal_comb="SRSS", damping_ratio=None):
         print(f"--- RSA ENGINE STARTED ({direction}-Direction, Modal Comb: {modal_comb}) ---")
         
         if not os.path.exists(self.modal_path):
@@ -39,7 +39,7 @@ class RSAEngine:
             modal_data = json.load(f)
             
         if "tables" not in modal_data or "periods" not in modal_data["tables"]:
-            raise Exception("Modal Data is missing from the result file.\n\n>> Please Run 'MODAL' Analysis again to regenerate periods and mode shapes.")
+            raise Exception("Modal Data is missing from the result file...")
 
         periods = modal_data["tables"]["periods"]
         mass_ratios = modal_data["tables"]["participation_mass"]
@@ -54,9 +54,13 @@ class RSAEngine:
 
         spectrum_direction = func_params.get("Direction", "Horizontal")
         interp_method = func_params.get("Interpolation", "Linear") 
-        print(f"      Spectrum Type: {spectrum_direction} | Method: {interp_method}")
         
-        zeta = func_params.get("Damping", 0.05)
+        if damping_ratio is not None:
+            zeta = float(damping_ratio)
+            print(f"      -> Using Load Case Damping: {zeta*100}%")
+        else:
+            zeta = func_params.get("Damping", 0.05)
+            print(f"      -> Using Function Default Damping: {zeta*100}%")
 
         per_mode_shear = []          
         per_mode_omega = []          
@@ -67,36 +71,40 @@ class RSAEngine:
             for nid in first_mode.keys():
                 per_mode_u[nid] = []
 
+
+        if zeta == 0.05:
+            eta = 1.0
+        else:
+
+            source_damp_percent = 5.0
+            target_damp_percent = zeta * 100.0
+            
+            denom = 2.31 - 0.41 * np.log(source_damp_percent)
+            
+            num = 2.31 - 0.41 * np.log(target_damp_percent)
+            
+            eta = num / denom
+            print(f"      -> Applied Damping Correction (Newmark & Hall): {eta:.5f}")
+
         print("\nMode | Period (s) |  SaR (g)  | Mass Ratio | Base Shear Coeff")
         print("-" * 65)
 
-        detailed_table = []
-
         g = 9.81
-
-        for i, mode_info in enumerate(periods):
-            T = mode_info["T"]
-            omega = mode_info["omega"]
-            
+        
         spec_T, spec_Sa, params = self.generator.generate_spectrum_curve(
             ss=func_params['Ss'], s1=func_params['S1'], site_class=func_params['SiteClass'], 
             R=func_params['R'], D=func_params['D'], I=func_params['I'], 
             tl=func_params['TL'], direction=spectrum_direction, t_max=10.0                   
         )
 
-        TA, TB = params["TA"], params["TB"]
-
-        print("\nMode | Period (s) |  SaR (g)  | Mass Ratio | Base Shear Coeff")
-        print("-" * 65)
-        
         detailed_table = []
-        g = 9.81
 
         for i, mode_info in enumerate(periods):
             T = mode_info["T"]
             omega = mode_info["omega"]
-
-            sar_g = np.interp(T, spec_T, spec_Sa)
+            
+            sar_g_raw = np.interp(T, spec_T, spec_Sa)
+            sar_g = sar_g_raw * eta  
 
             if direction == "X": 
                 ratio = mass_ratios[i]["Ux"]

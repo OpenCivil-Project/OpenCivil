@@ -1,7 +1,7 @@
 
 
  SAP2000 v25.3.1 Ultimate 64-bit (Analysis Build 9960/64)                       
- File: C:\Users\Ahmed\Desktop\SapTest\untimate test.OUT                         
+ File: E:\MetuFire\OpenCivil\Example_Project\SapTest\untimate test.OUT          
                                                                      
                                                                        
 
@@ -16,3 +16,4 @@
   JOINTS              UX  UY  UZ  RX  RY  RZ
        1 TO      17    A   A   A   A   A   A
       19 TO      34    -   -   -   A   A   A
+      15 TO      80    A   A   A   A   A   A

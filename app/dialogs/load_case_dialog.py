@@ -193,10 +193,25 @@ class LoadCaseDetailDialog(QDialog):
                                                  
         self.group_settings = QGroupBox("Other Parameters")
         v_set = QVBoxLayout(self.group_settings)
+        
         self.chk_pdelta = QCheckBox("Geometric Nonlinearity (P-Delta)")
         self.chk_pdelta.setChecked(self.case.p_delta)
         v_set.addWidget(self.chk_pdelta)
+
+        h_damp = QHBoxLayout()
+        self.lbl_damp = QLabel("Constant Modal Damping:")
+        h_damp.addWidget(self.lbl_damp)
+        self.input_damping = QLineEdit()
+        
+        current_damp = getattr(self.case, 'modal_damping', 0.05)
+        self.input_damping.setText(str(current_damp))
+        
+        self.input_damping.setPlaceholderText("e.g. 0.05")
+        h_damp.addWidget(self.input_damping)
+        v_set.addLayout(h_damp)
+        
         layout.addWidget(self.group_settings)
+
         
         h_btns = QHBoxLayout()
         h_btns.addStretch()
@@ -227,6 +242,7 @@ class LoadCaseDetailDialog(QDialog):
             else: self.radio_dir_srss.setChecked(True)
 
     def on_type_changed(self, text):
+        
         """Show/Hide UI elements based on case type"""
         is_modal = (text == "Modal")
         is_nonlinear = (text == "Nonlinear Static")
@@ -234,9 +250,15 @@ class LoadCaseDetailDialog(QDialog):
         
         self.group_loads.setVisible(not is_modal and not is_rsa)                            
         self.group_modal.setVisible(is_modal)
-        self.group_settings.setVisible(is_nonlinear)
         self.group_rsa.setVisible(is_rsa)           
         
+        self.group_settings.setVisible(is_nonlinear or is_rsa)
+        
+        self.chk_pdelta.setVisible(is_nonlinear)     
+        self.lbl_damp.setVisible(is_rsa)            
+        self.input_damping.setVisible(is_rsa)       
+
+
         self.setWindowTitle("Load Case Data - " + text)
 
     def populate_loads(self):
@@ -291,6 +313,11 @@ class LoadCaseDetailDialog(QDialog):
         c = LoadCase(self.input_name.text().strip(), self.combo_type.currentText())
         
         c.p_delta = self.chk_pdelta.isChecked()
+
+        try:
+            c.modal_damping = float(self.input_damping.text())
+        except ValueError:
+            c.modal_damping = 0.05  
         
         if c.case_type == "Modal":
             c.num_modes = self.spin_max_modes.value()

@@ -8549,7 +8549,7 @@
             "SiteClass": "ZB",
             "Direction": "Horizontal",
             "Interpolation": "Linear",
-            "Damping": 0.05
+            "Damping": 0.1
         }
     ]
 }
