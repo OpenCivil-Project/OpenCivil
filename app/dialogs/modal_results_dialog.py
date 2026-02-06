@@ -51,8 +51,8 @@ class ModalResultsDialog(QDialog):
             
             rsa_headers = [
                 "Mode", "Period (s)", "DampRatio", 
-                f"U1 Acc ({u_acc})", f"U2 Acc ({u_acc})", f"U3 Acc ({u_acc})",
-                f"U1 Amp ({u_len})", f"U2 Amp ({u_len})", f"U3 Amp ({u_len})"
+                f"U1 S_a ({u_acc})", f"U2 S_a ({u_acc})", f"U3 S_a ({u_acc})",
+                f"U1 S_d ({u_len})", f"U2 S_d ({u_len})", f"U3 S_d ({u_len})"
             ]
             
             rsa_data_formatted = []
