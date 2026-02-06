@@ -8,7 +8,6 @@ from PyQt6.QtCore import QThread, pyqtSignal
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.dirname(current_dir)
 if root_dir not in sys.path: sys.path.append(root_dir)
-
 from core.solver.linear_static.main_engine import run_linear_static_analysis
 from core.solver.modal.modal_engine import run_modal_analysis
 from core.solver.RSA.rsa_engine import RSAEngine
