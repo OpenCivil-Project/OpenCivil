@@ -25,7 +25,7 @@ DefaultDirName={autopf}\{#MyAppName}
 
 ; Icon settings
 UninstallDisplayIcon={app}\{#MyAppExeName}
-SetupIconFile=E:\MetuFire\V0.63\graphic\logo.ico
+SetupIconFile=E:\MetuFire\OpenCivil\graphic\logo.ico
 
 ; System settings
 ChangesAssociations=yes
@@ -71,7 +71,7 @@ Name: "fileassoc"; Description: "Associate .mf files with OpenCivil"; Types: ful
 ; FILES
 ; --------------------------------------------------------------------
 [Files]
-Source: "E:\MetuFire\V0.63\app\dist\OpenCivil\*"; \
+Source: "E:\MetuFire\OpenCivil\app\dist\OpenCivil\*"; \
 DestDir: "{app}"; \
 Flags: ignoreversion recursesubdirs createallsubdirs; \
 Components: core
