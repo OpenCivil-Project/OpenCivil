@@ -11,7 +11,6 @@ venv/
 app/build/
 app/dist/
 app/output/
-Example_Project/SapTest/
 
 *.spec
 *.exe
