@@ -61,8 +61,15 @@ class SolverWorker(QThread):
                         if u_dir == "U2": direction = "Y"
                         elif u_dir == "U3": direction = "Z"
                         
-                        res_dict = engine.run(function_name=func, direction=direction, modal_comb=modal_comb)
+                        damp_val = getattr(case_obj, 'modal_damping', 0.05)
                         
+                        res_dict = engine.run(
+                            function_name=func, 
+                            direction=direction, 
+                            modal_comb=modal_comb, 
+                            damping_ratio=damp_val  
+                        )
+
                         if res_dict:
                                                         
                             shear_results.append(res_dict["base_shear_coeff"])

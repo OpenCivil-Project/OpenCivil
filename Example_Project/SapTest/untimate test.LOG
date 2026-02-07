@@ -6,7 +6,7 @@
 
 
 
- B E G I N   A N A L Y S I S                                2026/02/07  01:11:07
+ B E G I N   A N A L Y S I S                                2026/02/07  03:02:22
 
 
  RUNNING ANALYSIS WITHIN THE GUI PROCESS
@@ -36,11 +36,11 @@
  NUMBER OF THREADS: FORM (AUTOMATIC)       =           2
 
 
- E L E M E N T   F O R M A T I O N                                      01:11:07
+ E L E M E N T   F O R M A T I O N                                      03:02:22
 
 
 
- L I N E A R   E Q U A T I O N   S O L U T I O N                        01:11:07
+ L I N E A R   E Q U A T I O N   S O L U T I O N                        03:02:22
 
  FORMING STIFFNESS AT ZERO (UNSTRESSED) INITIAL CONDITIONS
 
@@ -57,7 +57,7 @@
  ---------------------------------
 
 
- L I N E A R   S T A T I C   C A S E S                                  01:11:07
+ L I N E A R   S T A T I C   C A S E S                                  03:02:22
 
  USING STIFFNESS AT ZERO (UNSTRESSED) INITIAL CONDITIONS
 
@@ -71,7 +71,7 @@
  CASE: 1.6D+1.4L
 
 
- E I G E N   M O D A L   A N A L Y S I S                                01:11:07
+ E I G E N   M O D A L   A N A L Y S I S                                03:02:22
 
  CASE: MODAL
 
@@ -110,7 +110,7 @@
  NUMBER OF STIFFNESS SHIFTS                =           0
 
 
- R E S P O N S E - S P E C T R U M   A N A L Y S I S                    01:11:08
+ R E S P O N S E - S P E C T R U M   A N A L Y S I S                    03:02:22
 
  CASE: RSA_X
 
@@ -120,4 +120,4 @@
  NUMBER OF DYNAMIC MODES TO BE USED        =          12
 
 
- A N A L Y S I S   C O M P L E T E                          2026/02/07  01:11:08
+ A N A L Y S I S   C O M P L E T E                          2026/02/07  03:02:22

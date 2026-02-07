@@ -45,7 +45,8 @@
             "num_modes": 12,
             "rsa_loads": [],
             "modal_comb": "SRSS",
-            "dir_comb": "SRSS"
+            "dir_comb": "SRSS",
+            "modal_damping": 0.05
         },
         {
             "name": "MODAL",
@@ -56,7 +57,8 @@
             "num_modes": 12,
             "rsa_loads": [],
             "modal_comb": "SRSS",
-            "dir_comb": "SRSS"
+            "dir_comb": "SRSS",
+            "modal_damping": 0.05
         },
         {
             "name": "RSA_X_Dir",
@@ -72,8 +74,9 @@
                     9.81
                 ]
             ],
-            "modal_comb": "SRSS",
-            "dir_comb": "SRSS"
+            "modal_comb": "CQC",
+            "dir_comb": "SRSS",
+            "modal_damping": 0.1
         },
         {
             "name": "LIVE",
@@ -89,7 +92,8 @@
             "num_modes": 12,
             "rsa_loads": [],
             "modal_comb": "SRSS",
-            "dir_comb": "SRSS"
+            "dir_comb": "SRSS",
+            "modal_damping": 0.05
         },
         {
             "name": "1.6D + 1.4L",
@@ -109,7 +113,8 @@
             "num_modes": 12,
             "rsa_loads": [],
             "modal_comb": "SRSS",
-            "dir_comb": "SRSS"
+            "dir_comb": "SRSS",
+            "modal_damping": 0.05
         }
     ],
     "grid": {

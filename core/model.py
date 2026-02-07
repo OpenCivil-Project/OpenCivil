@@ -305,7 +305,8 @@ class StructuralModel:
                 "num_modes": getattr(lc, 'num_modes', 12),
                 "rsa_loads": getattr(lc, 'rsa_loads', []),
                 "modal_comb": getattr(lc, 'modal_comb', 'SRSS'),
-                "dir_comb": getattr(lc, 'dir_comb', 'SRSS')
+                "dir_comb": getattr(lc, 'dir_comb', 'SRSS'),
+                "modal_damping": getattr(lc, 'modal_damping', 0.05) 
             })
 
         for mat in self.materials.values():
@@ -549,6 +550,7 @@ class StructuralModel:
                 new_lc.p_delta = lc_data.get("p_delta", False)
                 new_lc.mass_source = lc_data.get("mass_source", "Default")
                 new_lc.num_modes = lc_data.get("num_modes", 12)
+                new_lc.modal_damping = lc_data.get("modal_damping", 0.05)
                 
                 self.load_cases[name] = new_lc
         else:

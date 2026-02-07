@@ -191,7 +191,7 @@ class LoadCaseDetailDialog(QDialog):
         layout_rsa.addWidget(grp_rsa_loads)
         layout.addWidget(self.group_rsa)
                                                  
-        self.group_settings = QGroupBox("Other Parameters")
+        self.group_settings = QGroupBox("Extra Settings")
         v_set = QVBoxLayout(self.group_settings)
         
         self.chk_pdelta = QCheckBox("Geometric Nonlinearity (P-Delta)")

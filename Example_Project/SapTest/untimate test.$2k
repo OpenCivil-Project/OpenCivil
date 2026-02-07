@@ -13,7 +13,7 @@ TABLE:  "CASE - MODAL 1 - GENERAL"
    Case=MODAL   ModeType=Eigen   MaxNumModes=12   MinNumModes=1   EigenShift=0   EigenCutoff=0   EigenTol=1E-09   AutoShift=Yes
  
 TABLE:  "CASE - RESPONSE SPECTRUM 1 - GENERAL"
-   Case=RSA_X   ModalCombo=SRSS   GMCf1=1   GMCf2=0   PerRigid=SRSS   DirCombo=SRSS   ConstDamp=0.1   EccenRatio=0
+   Case=RSA_X   ModalCombo=CQC   GMCf1=1   GMCf2=0   PerRigid=SRSS   DirCombo=SRSS   ConstDamp=0.1   EccenRatio=0
  
 TABLE:  "CASE - RESPONSE SPECTRUM 2 - LOAD ASSIGNMENTS"
    Case=RSA_X   LoadName=U1   CoordSys=GLOBAL   Function="Response Spectrum"   Angle=0   TransAccSF=9.81
