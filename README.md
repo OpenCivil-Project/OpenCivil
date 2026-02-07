@@ -365,11 +365,9 @@ Civil Engineering Student | Middle East Technical University (METU)
 | Feature | Preview |
 |---------|---------|
 | **3D Modeling** | ![Modeling](images/hero-main.png) |
-| **Matrix Spy** | Shows 12×12 stiffness matrix in spreadsheet view |
 | **Deformed Shape** | ![Results](images/deformed_shape.png) |
-| **Modal Animation** | Breathing effect showing mode shapes |
-| **Response Spectrum** | TBDY 2018 spectrum curves with modal combination |
-| **Validation** | Side-by-side comparison with commercial software (see `/images/validation/`) |
+| **Modal Animation** | ![Animation](images/Animation.gif) |
+| **Response Spectrum** | [TBDY 2018](images/TBDY_Response_Spectra.png) |
 
 ---
 
