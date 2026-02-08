@@ -125,36 +125,50 @@ class GlobalAssembler:
 
         return k_final
 
-    def _get_timoshenko_fef(self, L, a, P_local, E, G, I, As):
+    def _get_exact_fef_via_stiffness(self, L, a, P_vec_local, mat, sec):
         """
-        Calculates Fixed End Forces (FEF) for a Point Load on a Timoshenko Beam.
-        Returns array of 4 values: [V_i, M_i, V_j, M_j]
+        Calculates EXACT FEF by treating the member as two sub-elements 
+        connected at the load point. This guarantees consistency with 
+        the global stiffness matrix formulation (Timoshenko).
         """
-        if L == 0 or As == 0: return np.zeros(4)
+        if L == 0: return np.zeros(12)
+        
+        b = L - a
+  
+        k_left = get_local_stiffness_matrix(
+            E=mat['E'], G=mat['G'], A=sec['A'], J=sec['J'],
+            I22=sec['I22'], I33=sec['I33'],
+            As2=sec['As2'], As3=sec['As3'], L=a, L_tor=a
+        )
+        
+        k_right = get_local_stiffness_matrix(
+            E=mat['E'], G=mat['G'], A=sec['A'], J=sec['J'],
+            I22=sec['I22'], I33=sec['I33'],
+            As2=sec['As2'], As3=sec['As3'], L=b, L_tor=b
+        )
+        
 
-        Phi = (12.0 * E * I) / (G * As * L**2)
+        K_mid = k_left[6:12, 6:12] + k_right[0:6, 0:6]
         
-        Omega = Phi * L**2 / 12.0
+        F_mid = np.zeros(6)
+        F_mid[0:3] = P_vec_local
         
-        A_mat = np.zeros((4, 4))
-                
-        A_mat[0, :] = [1, 0, 0, 0]
-                 
-        A_mat[1, :] = [0, 1, 0, -6*Omega]
-                
-        A_mat[2, :] = [1, L, L**2, L**3]
-                 
-        A_mat[3, :] = [0, 1, 2*L, 3*L**2 - 6*Omega]
-        
+
         try:
-            A_inv = np.linalg.inv(A_mat)
+            U_mid = np.linalg.solve(K_mid, F_mid)
         except np.linalg.LinAlgError:
-            return np.zeros(4)
-
-        vec_v = np.array([1, a, a**2, a**3])
-        N = vec_v @ A_inv
+            return np.zeros(12)
+            
+        R_start = k_left[0:6, 6:12] @ U_mid
         
-        return -P_local * N
+        R_end = k_right[6:12, 0:6] @ U_mid
+        
+        fef_combined = np.zeros(12)
+        fef_combined[0:6] = R_start
+        fef_combined[6:12] = R_end
+        
+        return fef_combined
+    
 
     def _condense_fef(self, k_local, fef_local, releases):
         """
@@ -241,9 +255,18 @@ class GlobalAssembler:
                     w_local = R_3x3 @ w_defined
                 else:
                     w_local = w_defined
+
+                if load.get('projected', False):
+                    w_local = self._apply_projection_factor(
+                        w_local, 
+                        p1, 
+                        p2, 
+                        L_total, 
+                        load.get('coord', 'Global')
+                    )
                 
                 wx, wy, wz = w_local
-                w_vec_local_for_offset = w_local                              
+                w_vec_local_for_offset = w_local                               
 
                 fef_local[0] = -wx * L_clear / 2;    fef_local[6] = -wx * L_clear / 2
                                     
@@ -254,42 +277,33 @@ class GlobalAssembler:
                 fef_local[4] =  wz * L_clear**2/12;  fef_local[10]= -wz * L_clear**2/12
 
             elif load['type'] == 'member_point':
-                                                                             
                 P_val = load['force'] * scale
-                idx, sign = self._parse_load_direction(load['dir'])
-                if idx is None: continue 
+                
+                idx_dir, sign = self._parse_load_direction(load['dir'])
+                if idx_dir is None: continue 
                 
                 vec_defined = np.zeros(3)
-                vec_defined[idx] = 1.0 * sign * P_val
+                vec_defined[idx_dir] = 1.0 * sign * P_val
 
                 coord_sys = load.get('coord', 'Global')
                 if "GRAVITY" in str(load['dir']).upper(): coord_sys = 'Global'
                 
+
                 if coord_sys == 'Global':
+
                     P_local = R_3x3 @ vec_defined 
                 else:
                     P_local = vec_defined
                 
-                Px, Py, Pz = P_local
+
                 dist_raw = load['dist']
                 if load['is_rel']: dist_raw *= L_total
                 
                 if dist_raw >= ri and dist_raw <= (L_total - rj):
-                    a = dist_raw - ri 
-                    ratio = a / L_clear
-                    fef_local[0] = -Px * (1 - ratio)
-                    fef_local[6] = -Px * ratio
+                    a_dist = dist_raw - ri 
                     
-                    phi_y = (12 * mat['E'] * sec['I33']) / (mat['G'] * sec['As2'] * L_clear**2) if sec['As2'] > 0 else 0
-                    phi_z = (12 * mat['E'] * sec['I22']) / (mat['G'] * sec['As3'] * L_clear**2) if sec['As3'] > 0 else 0
+                    fef_local = self._get_exact_fef_via_stiffness(L_clear, a_dist, P_local, mat, sec)
                     
-                    res_y = self._get_timoshenko_fef(L_clear, a, P_local[1], mat['E'], mat['G'], sec['I33'], sec['As2'])
-                    fef_local[1] = res_y[0]; fef_local[5] = res_y[1]
-                    fef_local[7] = res_y[2]; fef_local[11]= res_y[3]
-
-                    res_z = self._get_timoshenko_fef(L_clear, a, P_local[2], mat['E'], mat['G'], sec['I22'], sec['As3'])
-                    fef_local[2] = res_z[0]; fef_local[4] = -res_z[1] 
-                    fef_local[8] = res_z[2]; fef_local[10]= -res_z[3]
 
             if any(el['releases'][0]) or any(el['releases'][1]):
                 fef_local = self._condense_fef(k_raw, fef_local, el['releases'])
@@ -365,3 +379,52 @@ class GlobalAssembler:
         
         print(f"Warning: Unknown load direction '{dir_str}'. Defaulting to Zero.")
         return None, 0.0
+
+
+    def _apply_projection_factor(self, w_local, p1, p2, L_total, coord_system):
+        """
+        Scales a distributed load based on horizontal projection.
+        
+        For projected loads in Global coordinates:
+        - Calculates the horizontal (XY plane) projection length
+        - Scales load intensity: w_actual = w_input * (L_horizontal / L_total)
+        
+        Args:
+            w_local: Load vector in local coordinates [wx, wy, wz]
+            p1, p2: Node coordinates in global system
+            L_total: Total member length (center to center)
+            coord_system: "Global" or "Local"
+        
+        Returns:
+            Scaled load vector [wx_scaled, wy_scaled, wz_scaled]
+        """
+        # Safety check: Projection only valid for Global coordinates
+        if coord_system != "Global":
+            print(f"Warning: Projected loads only supported in Global coordinates. Ignoring projection.")
+            return w_local
+        
+        # Calculate horizontal projection (XY plane)
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        L_horizontal = np.sqrt(dx**2 + dy**2)
+        
+        # Edge case: Vertical member (L_horizontal ≈ 0)
+        if L_horizontal < 1e-9:
+            print(f"Warning: Member is vertical. Projected horizontal load = 0.")
+            return np.array([0.0, 0.0, 0.0])
+        
+        # Edge case: Zero length member (shouldn't happen, but safe)
+        if L_total < 1e-9:
+            print(f"Warning: Zero-length member detected.")
+            return w_local
+        
+        # Calculate projection factor
+        proj_factor = L_horizontal / L_total
+        
+        # Scale the load
+        w_scaled = w_local * proj_factor
+        
+        print(f"   Projected Load: Original intensity = {np.linalg.norm(w_local):.2f}, "
+            f"Scaled = {np.linalg.norm(w_scaled):.2f} (factor = {proj_factor:.4f})")
+        
+        return w_scaled

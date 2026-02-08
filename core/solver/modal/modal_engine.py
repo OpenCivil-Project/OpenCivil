@@ -87,6 +87,9 @@ def run_modal_analysis(input_json_path, output_json_path):
     K_free = K_full.tocsc()[is_free, :][:, is_free]
     M_free = M_full.tocsc()[is_free, :][:, is_free]
 
+    print(f"DEBUG: M_free sum = {M_free.sum():.6f}")
+    print(f"DEBUG: M_free diagonal sum = {M_free.diagonal().sum():.6f}")
+
     try:
         req_modes = modal_case_def.get("num_modes", 12) if modal_case_def else 12
         
