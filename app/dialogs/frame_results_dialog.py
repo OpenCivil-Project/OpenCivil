@@ -1,6 +1,7 @@
 import sys
 import os
 import math
+import json
 import numpy as np
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                              QComboBox, QRadioButton, QGroupBox, QSlider, 
@@ -23,6 +24,26 @@ class MemberAnalyzer:
         self.model = model
         self.n_stations = num_stations
         
+
+        self.element_fef = np.zeros(12) 
+
+        try:
+            if hasattr(self.model, "file_path") and self.model.file_path:
+                matrix_path = self.model.file_path.replace(".mf", "_matrices.json")
+                
+                if os.path.exists(matrix_path):
+                    with open(matrix_path, "r") as f:
+                        data = json.load(f)
+                        str_id = str(self.el.id)
+                        if str_id in data:
+                            self.element_fef = np.array(data[str_id]["fef"])
+                            print(f"Loaded FEF for Element {self.el.id}: {self.element_fef}")
+            else:
+                print("Warning: Model does not have a file_path attribute. Cannot find matrices.")
+        except Exception as e:
+            print(f"Error loading FEF: {e}")
+
+
         self.L_clear = self.el.length()                                                               
         self.stations = np.linspace(0, self.L_clear, num_stations)
         
@@ -76,7 +97,7 @@ class MemberAnalyzer:
             mat.E, mat.G, sec.A, sec.J, I22, I33, As2, As3, self.L_clear
         )
         
-        self.end_forces = k_local @ u_flex
+        self.end_forces = (k_local @ u_flex) + self.element_fef
         
         Fx1, Fy1, Fz1 = self.end_forces[0], self.end_forces[1], self.end_forces[2]
         Mx1, My1, Mz1 = self.end_forces[3], self.end_forces[4], self.end_forces[5]

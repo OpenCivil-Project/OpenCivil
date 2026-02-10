@@ -308,6 +308,8 @@ class GlobalAssembler:
             if any(el['releases'][0]) or any(el['releases'][1]):
                 fef_local = self._condense_fef(k_raw, fef_local, el['releases'])
 
+            self.spy.record_fef(el['id'], fef_local)
+            
             T_rot = np.zeros((12, 12))
             for i in range(4): T_rot[i*3:(i+1)*3, i*3:(i+1)*3] = R_3x3
 
