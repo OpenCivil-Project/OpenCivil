@@ -114,13 +114,11 @@ class FBDViewerDialog(QDialog):
         
         self.add_axial_tab()
 
-        self.add_major_axis_tab()
+        self.add_Minor_axis_tab()
 
-        self.add_minor_axis_tab()
+        self.add_Major_axis_tab()
 
         self.add_torsion_tab()
-
-        self.add_3d_tab()
 
     def _load_json(self, path):
         if not os.path.exists(path): return {}
@@ -166,7 +164,7 @@ class FBDViewerDialog(QDialog):
         figure = Figure(figsize=(8, 4), dpi=100, facecolor='white')
         canvas = FigureCanvas(figure)
         layout.addWidget(canvas)
-        self.tabs.addTab(tab, "Axial Force")
+        self.tabs.addTab(tab, "Axial Force (P)")
 
         if self.forces is None: return
 
@@ -198,14 +196,14 @@ class FBDViewerDialog(QDialog):
         figure.tight_layout()
         canvas.draw()
 
-    def add_major_axis_tab(self):
+    def add_Minor_axis_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
         figure = Figure(figsize=(8, 5), dpi=100, facecolor='white')
         canvas = FigureCanvas(figure)
         layout.addWidget(canvas)
-        self.tabs.addTab(tab, "Major Axis (Y-Z)")
+        self.tabs.addTab(tab, "Minor Axis (V3-M2)")
 
         if self.forces is None: return
 
@@ -225,7 +223,7 @@ class FBDViewerDialog(QDialog):
         fy_j = self.forces[7]
         
         self._draw_shear_arrow(ax, 0, fy_i, 'left', L_norm)
-        self._draw_shear_arrow(ax, L_norm, fy_j, 'right', L_norm)
+        self._draw_shear_arrow(ax, L_norm, -fy_j, 'right', L_norm)
         
         mz_i = self.forces[5]
         mz_j = self.forces[11]
@@ -237,20 +235,20 @@ class FBDViewerDialog(QDialog):
         ax.set_xlim(-3, L_norm + 3)
         ax.set_aspect('equal')
         ax.axis('off')
-        ax.set_title(f'Major Axis Bending - Fy [{self.force_unit}], Mz [{self.moment_unit}]', 
+        ax.set_title(f'Minor Axis Bending - Fy [{self.force_unit}], Mz [{self.moment_unit}]', 
                     fontsize=12, fontweight='bold', pad=20)
         
         figure.tight_layout()
         canvas.draw()
 
-    def add_minor_axis_tab(self):
+    def add_Major_axis_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
         figure = Figure(figsize=(8, 5), dpi=100, facecolor='white')
         canvas = FigureCanvas(figure)
         layout.addWidget(canvas)
-        self.tabs.addTab(tab, "Minor Axis (Z-Y)")
+        self.tabs.addTab(tab, "Major Axis (M3-V2)")
 
         if self.forces is None: return
 
@@ -282,7 +280,7 @@ class FBDViewerDialog(QDialog):
         ax.set_xlim(-3, L_norm + 3)
         ax.set_aspect('equal')
         ax.axis('off')
-        ax.set_title(f'Minor Axis Bending - Fz [{self.force_unit}], My [{self.moment_unit}]', 
+        ax.set_title(f'Major Axis Bending - Fz [{self.force_unit}], My [{self.moment_unit}]', 
                     fontsize=12, fontweight='bold', pad=20)
         
         figure.tight_layout()
@@ -295,7 +293,7 @@ class FBDViewerDialog(QDialog):
         figure = Figure(figsize=(8, 4), dpi=100, facecolor='white')
         canvas = FigureCanvas(figure)
         layout.addWidget(canvas)
-        self.tabs.addTab(tab, "Torsion")
+        self.tabs.addTab(tab, "Torsion (T)")
 
         if self.forces is None: return
 
@@ -328,27 +326,43 @@ class FBDViewerDialog(QDialog):
         canvas.draw()
 
     def _draw_axial_arrow(self, ax, x_pos, force, side, beam_length=10):
-        """Draw standard axial force arrow with unit label"""
-        if abs(force) < 0.001: return
-        
+        if abs(force) < 0.001:
+            return
+
         arrow_len = 1.2
-        y_pos = 0
-        
-        dx = arrow_len if force > 0 else -arrow_len
-        
-        if side == 'right':
-            dx = -dx
-        
-        ax.arrow(x_pos - dx, y_pos, dx * 0.85, 0,
-                head_width=0.25, head_length=0.15,
-                fc=self.COLORS['axial'], ec=self.COLORS['axial'],
-                linewidth=2, length_includes_head=True)
-        
-        label_x = x_pos - dx * 0.5
-        ax.text(label_x, y_pos + 0.6, f'{abs(force):.2f}',
-               ha='center', va='bottom', fontsize=10,
-               bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
-                        edgecolor=self.COLORS['axial'], linewidth=1.5))
+        y_pos = 0.5
+
+        # unit sign of force
+        s = 1 if force > 0 else -1
+
+        if side == 'left':          # i-end
+            dx = s * arrow_len
+        else:                       # j-end
+            dx =  s * arrow_len
+
+        ax.arrow(
+            x_pos, y_pos,
+            dx * 0.85, 0,
+            head_width=0.25,
+            head_length=0.15,
+            fc=self.COLORS['axial'],
+            ec=self.COLORS['axial'],
+            linewidth=2,
+            length_includes_head=True
+        )
+
+        ax.text(
+            x_pos + dx * 0.5, y_pos + 0.6,
+            f'{abs(force):.2f}',
+            ha='center', va='bottom', fontsize=10,
+            bbox=dict(
+                boxstyle='round,pad=0.3',
+                facecolor='white',
+                edgecolor=self.COLORS['axial'],
+                linewidth=1.5
+            )
+        )
+
 
     def _draw_shear_arrow(self, ax, x_pos, force, side, beam_length=10):
         """Draw standard shear force arrow with unit label"""
@@ -373,30 +387,35 @@ class FBDViewerDialog(QDialog):
 
     def _draw_moment(self, ax, x_pos, moment, side, beam_length=10):
         """Draw standard moment with curved arrow and unit label"""
-        if abs(moment) < 0.001: return
-        
+        if abs(moment) < 0.001:
+            return
+
         radius = 0.5
         theta = np.linspace(0, 1.5 * np.pi, 30)
-        
-        if moment > 0:                     
+
+        if moment < 0:
             arc_x = x_pos + radius * np.cos(theta)
             arc_y = radius * np.sin(theta)
-        else:             
+        else:
             arc_x = x_pos + radius * np.cos(-theta)
             arc_y = radius * np.sin(-theta)
-        
+
         ax.plot(arc_x, arc_y, color=self.COLORS['moment'], linewidth=2)
-        
-        ax.annotate('', xy=(arc_x[-1], arc_y[-1]),
-                   xytext=(arc_x[-3], arc_y[-3]),
-                   arrowprops=dict(arrowstyle='->', color=self.COLORS['moment'],
-                                 lw=2))
-        
-        label_y = 2.0
-        ax.text(x_pos, label_y, f'{abs(moment):.2f}',
-               ha='center', va='center', fontsize=10,
-               bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
-                        edgecolor=self.COLORS['moment'], linewidth=1.5))
+
+        ax.annotate(
+            '',
+            xy=(arc_x[-1], arc_y[-1]),
+            xytext=(arc_x[-3], arc_y[-3]),
+            arrowprops=dict(arrowstyle='->', color=self.COLORS['moment'], lw=2)
+        )
+
+        ax.text(
+            x_pos, 2.0, f'{abs(moment):.2f}',
+            ha='center', va='center', fontsize=10,
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                    edgecolor=self.COLORS['moment'], linewidth=1.5)
+        )
+
 
     def _draw_torsion(self, ax, x_pos, torque, side, beam_length=10):
         """Draw torsion moment with double-headed arrow and unit label"""
@@ -459,19 +478,36 @@ class FBDViewerDialog(QDialog):
                 x_pos = L_norm if node_offset == 6 else 0
                 scale = 1.5 * (1 if val > 0 else -1)
                 
-                ax.quiver(x_pos, 0, 0, vec[0]*scale, vec[1]*scale, vec[2]*scale,
-                         color=color, arrow_length_ratio=0.2, linewidth=2)
+                # For axial forces (Fx), position arrows outside the nodes
+                if idx == 0:  # Axial force
+                    y_offset = 0.8
+                    # Start arrow outside the node along X axis
+                    if node_offset == 0:  # Left node
+                        x_start = x_pos - 0.5
+                    else:  # Right node
+                        x_start = x_pos + 0.5
+                    
+                    ax.quiver(x_start, y_offset, 0, vec[0]*scale, vec[1]*scale, vec[2]*scale,
+                             color=color, arrow_length_ratio=0.2, linewidth=2)
+                    
+                    text_pos = [x_start + vec[0]*scale*1.2, 
+                               y_offset + vec[1]*scale*1.2,
+                               vec[2]*scale*1.2]
+                else:  # Shear forces stay at node
+                    ax.quiver(x_pos, 0, 0, vec[0]*scale, vec[1]*scale, vec[2]*scale,
+                             color=color, arrow_length_ratio=0.2, linewidth=2)
+                    
+                    text_pos = [x_pos + vec[0]*scale*1.2, 
+                               vec[1]*scale*1.2,
+                               vec[2]*scale*1.2]
                 
-                text_pos = [x_pos + vec[0]*scale*1.2, 
-                           vec[1]*scale*1.2,
-                           vec[2]*scale*1.2]
                 ax.text(text_pos[0], text_pos[1], text_pos[2],
                        f'{label}\n{abs(val):.1f} {unit}',
                        color=color, fontsize=9, ha='center', fontweight='bold')
 
-        ax.set_xlim(-2, L_norm + 2)
-        ax.set_ylim(-3, 3)
-        ax.set_zlim(-3, 3)
+        ax.set_xlim(-3, L_norm + 3)
+        ax.set_ylim(-2.5, 2.5)
+        ax.set_zlim(-2.5, 2.5)
         ax.set_xlabel('X', fontsize=10, fontweight='bold')
         ax.set_ylabel('Y', fontsize=10, fontweight='bold')
         ax.set_zlabel('Z', fontsize=10, fontweight='bold')

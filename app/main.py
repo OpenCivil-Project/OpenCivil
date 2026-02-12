@@ -1597,7 +1597,7 @@ def main():
 
     app = QApplication(sys.argv)
     
-    video_path = os.path.join(root_dir, "graphic", "intro.mp4")
+    video_path = os.path.join(root_dir, "graphic", "Animation.gif")
     
     if not os.path.exists(video_path):
                                                      

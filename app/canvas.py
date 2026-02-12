@@ -1968,15 +1968,14 @@ class MCanvas3D(gl.GLViewWidget):
         ghost_idx_counter = 0
 
         scale = 0.75
-        arrow_h = 0.3
-        
-        c_grav_ghost = (1, 0, 0, 0.2)
-        c_local_ghost = (0, 1, 0, 0.2)
-        c_other_ghost = (0, 0.5, 1, 0.2)
+      
+        c_grav_ghost = (0, 0, 0, 0.2)
+        c_local_ghost = (0, 0, 0, 0.2)
+        c_other_ghost = (0, 0, 0, 0.2)
 
-        c_grav_sel_fill = (1, 0, 0, 0.4); c_grav_line = (1, 0, 0, 1.0)
-        c_local_sel_fill = (0, 1, 0, 0.4); c_local_line = (0, 1, 0, 1.0)
-        c_other_sel_fill = (0, 0.5, 1, 0.4); c_other_line = (0, 0.5, 1, 1.0)
+        c_grav_sel_fill = (0, 0, 0, 0.4); c_grav_line = (0, 0, 0, 1.0)
+        c_local_sel_fill = (0, 0, 0, 0.4); c_local_line = (0, 0, 0, 1.0)
+        c_other_sel_fill = (0, 0, 0, 0.4); c_other_line = (0, 0, 0, 1.0)
 
         for load in model.loads:
             if not hasattr(load, 'wx'): continue
@@ -2068,11 +2067,34 @@ class MCanvas3D(gl.GLViewWidget):
                     spread_vec = (spread_vec / np.linalg.norm(spread_vec)) * 0.2
                 else: spread_vec = np.array([0.2, 0, 0])
 
+                def draw_arrow(tip_pos, direction, color):
+                    arrow_length = 1.2
+                    head_size = 0.45
+                    tail = tip_pos + direction * arrow_length
+                    sel_lines.extend([tail, tip_pos])
+                    sel_line_colors.extend([color, color])
+                    
+                    if abs(direction[2]) > 0.9:
+                        perp = np.array([1.0, 0.0, 0.0])
+                    else:
+                        perp = np.array([0.0, 0.0, 1.0])
+                    
+                    side_vec = np.cross(direction, perp)
+                    side_vec = (side_vec / np.linalg.norm(side_vec)) * head_size
+                    
+                    base = tip_pos + direction * head_size
+                    sel_lines.extend([tip_pos, base + side_vec])
+                    sel_lines.extend([tip_pos, base - side_vec])
+                    sel_line_colors.extend([color, color, color, color])
+
+                arrow_dir = -sign * load_vec 
+
+
                 pt_mid = (pt_base_1 + pt_base_2) / 2
-                arrow_base = pt_mid - (sign * load_vec * arrow_h)
-                
-                sel_lines.extend([pt_mid, arrow_base + spread_vec, pt_mid, arrow_base - spread_vec])
-                for _ in range(4): sel_line_colors.append(c_line)
+                draw_arrow(pt_mid, arrow_dir, c_line)
+
+                draw_arrow(pt_base_1, arrow_dir, c_line)
+                draw_arrow(pt_base_2, arrow_dir, c_line)
 
 
                 display_val = val * unit_registry.force_scale / unit_registry.length_scale
@@ -2264,13 +2286,7 @@ class MCanvas3D(gl.GLViewWidget):
             
             is_moment = hasattr(load, 'load_type') and load.load_type == "Moment"
             
-            if is_moment: c = (1, 0.5, 0, 1)         
-            elif "Gravity" in load.direction or (load.coord_system=="Global" and "Z" in load.direction and val < 0): 
-                c = (1, 0, 0, 1)      
-            elif load.coord_system == "Local": 
-                c = (0, 1, 0, 1)        
-            else: 
-                c = (0, 0.5, 1, 1)       
+            c = (0, 0, 0, 1)   
 
             tip = load_pos
             tail = tip - (draw_dir * L)
