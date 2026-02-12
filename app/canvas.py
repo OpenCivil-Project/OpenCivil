@@ -7,7 +7,8 @@ from core.units import unit_registry
 from graphic.camera_ctrl import ArcballCamera
 from post.deflection import get_deflected_shape
 from post.animation import AnimationManager
-
+from graphic.view_cube import ViewCube
+from OpenGL.GL import *
 class MCanvas3D(gl.GLViewWidget):
     signal_canvas_clicked = pyqtSignal(float, float, float)
     signal_right_clicked = pyqtSignal()
@@ -28,7 +29,7 @@ class MCanvas3D(gl.GLViewWidget):
             "edge_color": (0, 0, 0, 1),
             "slab_opacity": 0.4
         }
-        
+        self.view_cube = ViewCube()
         self.opts['distance'] = 40
         self.opts['elevation'] = 30
         self.opts['azimuth'] = 45
@@ -1702,6 +1703,16 @@ class MCanvas3D(gl.GLViewWidget):
                 self.element_items.append(curved_item)
         
     def mousePressEvent(self, event):
+
+        hit = self.view_cube.check_click(event.pos().x(), event.pos().y(), self.width(), self.height())
+ 
+        if hit:
+            print("View Cube Clicked!")
+            # Logic to snap view goes here:
+            # self.set_standard_view("TOP")
+            return # Don't select beams if we clicked the cube
+
+
         self._prev_mouse_pos = event.pos()
         modifiers = QApplication.keyboardModifiers()
         
@@ -2414,3 +2425,17 @@ class MCanvas3D(gl.GLViewWidget):
                 self._draw_elements_extruded(self.current_model)
             else:
                 self._draw_elements_wireframe(self.current_model)
+
+    
+    def paintGL(self, *args, **kwargs):
+        super().paintGL()
+        
+        try:
+            w = self.width()
+            h = self.height()
+            ratio = self.devicePixelRatio() if hasattr(self, 'devicePixelRatio') else 1.0
+            az = self.opts.get('azimuth', 45)
+            el = self.opts.get('elevation', 30)
+            self.view_cube.render(w, h, az, el, device_pixel_ratio=ratio)
+        except Exception as e:
+            print(f"ViewCube Error: {e}")
