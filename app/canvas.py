@@ -1024,27 +1024,26 @@ class MCanvas3D(gl.GLViewWidget):
             origin = np.array([node.x, node.y, node.z])
             is_selected = (node.id in self.selected_node_ids)
 
-            # Helper to condense logic
             def process_component(val, axis_vec, color, is_moment):
                 if abs(val) > 0:
                     d = axis_vec * (1 if val > 0 else -1)
                     add_arrow(origin, d, color, is_moment)
                     
-                    # ONLY ADD LABEL IF SELECTED
+
                     if is_selected:
                         l_type = "Moment" if is_moment else "Force"
                         self._add_load_label(origin, d, val, l_type, color)
 
-            # Forces
-            process_component(load.fz, np.array([0, 0, 1.0]), (0, 1, 0, 1) if load.fz > 0 else (1, 0, 0, 1), False)
-            process_component(load.fx, np.array([1.0, 0, 0]), (0, 0.5, 1, 1), False)
-            process_component(load.fy, np.array([0, 1.0, 0]), (0, 0.5, 1, 1), False)
+  
+            c_black = (0, 0, 0, 1)
 
-            # Moments
-            c_mom = (1, 0.5, 0, 1)
-            process_component(load.mz, np.array([0, 0, 1.0]), c_mom, True)
-            process_component(load.mx, np.array([1.0, 0, 0]), c_mom, True)
-            process_component(load.my, np.array([0, 1.0, 0]), c_mom, True)
+            process_component(load.fz, np.array([0, 0, 1.0]), c_black, False)
+            process_component(load.fx, np.array([1.0, 0, 0]), c_black, False)
+            process_component(load.fy, np.array([0, 1.0, 0]), c_black, False)
+
+            process_component(load.mz, np.array([0, 0, 1.0]), c_black, True)
+            process_component(load.mx, np.array([1.0, 0, 0]), c_black, True)
+            process_component(load.my, np.array([0, 1.0, 0]), c_black, True)
 
         if arrow_lines:
             self.addItem(gl.GLLinePlotItem(
