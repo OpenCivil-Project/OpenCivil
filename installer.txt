@@ -96,6 +96,7 @@ Workinggg
  --add-data "resources;resources" `
  --collect-all "core" `
  --collect-all "app" `
+ --collect-all "graphic" `
  --collect-all "pyqtgraph" `
  --collect-binaries "PyQt6" `
  --hidden-import="scipy.spatial.transform._rotation_groups" `
