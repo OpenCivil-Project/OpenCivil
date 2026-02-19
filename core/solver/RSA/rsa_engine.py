@@ -71,7 +71,6 @@ class RSAEngine:
             for nid in first_mode.keys():
                 per_mode_u[nid] = []
 
-
         if zeta == 0.05:
             eta = 1.0
         else:

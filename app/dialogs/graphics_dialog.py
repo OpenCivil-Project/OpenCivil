@@ -188,9 +188,6 @@ class GraphicsOptionsDialog(QDialog):
         labels = {0: "Off", 1: "4x", 2: "8x", 3: "16x"}
         self.lbl_aa.setText(labels[val])
         
-
-    
-
     def _on_restart(self):
         import subprocess, sys, os
         

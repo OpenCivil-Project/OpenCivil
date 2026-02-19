@@ -147,13 +147,11 @@ class GlobalAssembler:
             As2=sec['As2'], As3=sec['As3'], L=b, L_tor=b
         )
         
-
         K_mid = k_left[6:12, 6:12] + k_right[0:6, 0:6]
         
         F_mid = np.zeros(6)
         F_mid[0:3] = P_vec_local
         
-
         try:
             U_mid = np.linalg.solve(K_mid, F_mid)
         except np.linalg.LinAlgError:
@@ -169,7 +167,6 @@ class GlobalAssembler:
         
         return fef_combined
     
-
     def _condense_fef(self, k_local, fef_local, releases):
         """
         Adjusts the Fixed End Forces (FEF) to account for member releases.
@@ -288,14 +285,12 @@ class GlobalAssembler:
                 coord_sys = load.get('coord', 'Global')
                 if "GRAVITY" in str(load['dir']).upper(): coord_sys = 'Global'
                 
-
                 if coord_sys == 'Global':
 
                     P_local = R_3x3 @ vec_defined 
                 else:
                     P_local = vec_defined
                 
-
                 dist_raw = load['dist']
                 if load['is_rel']: dist_raw *= L_total
                 
@@ -304,7 +299,6 @@ class GlobalAssembler:
                     
                     fef_local = self._get_exact_fef_via_stiffness(L_clear, a_dist, P_local, mat, sec)
                     
-
             if any(el['releases'][0]) or any(el['releases'][1]):
                 fef_local = self._condense_fef(k_raw, fef_local, el['releases'])
 
@@ -382,7 +376,6 @@ class GlobalAssembler:
         print(f"Warning: Unknown load direction '{dir_str}'. Defaulting to Zero.")
         return None, 0.0
 
-
     def _apply_projection_factor(self, w_local, p1, p2, L_total, coord_system):
         """
         Scales a distributed load based on horizontal projection.
@@ -400,30 +393,25 @@ class GlobalAssembler:
         Returns:
             Scaled load vector [wx_scaled, wy_scaled, wz_scaled]
         """
-        # Safety check: Projection only valid for Global coordinates
+                                                                    
         if coord_system != "Global":
             print(f"Warning: Projected loads only supported in Global coordinates. Ignoring projection.")
             return w_local
         
-        # Calculate horizontal projection (XY plane)
         dx = p2[0] - p1[0]
         dy = p2[1] - p1[1]
         L_horizontal = np.sqrt(dx**2 + dy**2)
         
-        # Edge case: Vertical member (L_horizontal ≈ 0)
         if L_horizontal < 1e-9:
             print(f"Warning: Member is vertical. Projected horizontal load = 0.")
             return np.array([0.0, 0.0, 0.0])
         
-        # Edge case: Zero length member (shouldn't happen, but safe)
         if L_total < 1e-9:
             print(f"Warning: Zero-length member detected.")
             return w_local
         
-        # Calculate projection factor
         proj_factor = L_horizontal / L_total
         
-        # Scale the load
         w_scaled = w_local * proj_factor
         
         print(f"   Projected Load: Original intensity = {np.linalg.norm(w_local):.2f}, "

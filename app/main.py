@@ -55,6 +55,7 @@ from app.dialogs.spy_dialogs import MatrixSpyDialog, FBDViewerDialog
 from app.dialogs.deformed_shape_dialog import DeformedShapeDialog
 from app.dialogs.mass_source_dialog import MassSourceManagerDialog
 from app.dialogs.modal_results_dialog import ModalResultsDialog
+from auth import GoogleAuthManager, UserProfileWidget
 
 class OPENCIVILSplash(QSplashScreen):
     def __init__(self, pixmap):
@@ -763,7 +764,6 @@ class MainWindow(QMainWindow):
         
         super().keyPressEvent(event)
         
-
     def handle_right_click(self):
         if self.draw_mode_active:
             self.canvas.hide_preview_line()
@@ -1648,6 +1648,11 @@ class MainWindow(QMainWindow):
         
         self.status.showMessage(f"Response Spectrum Definitions Updated.")
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'user_widget'):
+            self.user_widget.reposition()
+
 def main():
     if sys.platform == 'win32':
         myappid = 'metu.civil.OPENCIVIL.v03'
@@ -1677,19 +1682,61 @@ def main():
     video_path = os.path.join(root_dir, "graphic", "Animation.gif")
     
     if not os.path.exists(video_path):
-                                                     
         print("Video not found, skipping splash.")
         window = MainWindow()
+
+        auth_manager = GoogleAuthManager()
+        if not auth_manager.login(parent=None):
+            sys.exit(0)
+
+        window.auth_manager = auth_manager
         window.showMaximized()
+
+        def attach_no_splash():
+            window.user_widget = UserProfileWidget(auth_manager, parent=window)
+            window.user_widget.reposition()
+            window.user_widget.show()
+            window.user_widget.raise_()
+
+        QTimer.singleShot(150, attach_no_splash)
         sys.exit(app.exec())
 
     splash = VideoSplash(video_path)
     window = MainWindow()
     
     def on_splash_finished():
-        window.showMaximized()                   
+        splash.close()
+
+        auth_manager = GoogleAuthManager()
+        if not auth_manager.login(parent=None):
+            app.quit()
+            return
+
+        window.auth_manager = auth_manager
+
+        window.showMaximized()
         window.activateWindow()
-        splash.close()                       
+
+        def attach_user_widget():
+            window.user_widget = UserProfileWidget(auth_manager, parent=window)
+            window.user_widget.reposition()
+            window.user_widget.show()
+            window.user_widget.raise_()
+
+            def on_logout():
+                if hasattr(window, 'user_widget'):
+                    window.user_widget.deleteLater()
+                window.hide()
+                if auth_manager.login(parent=None):
+                    window.showMaximized()
+                    window.activateWindow()
+                    QTimer.singleShot(100, attach_user_widget)
+                else:
+                    app.quit()
+
+            window.user_widget.logout_requested.connect(on_logout)
+
+        QTimer.singleShot(150, attach_user_widget)               
         
         if len(sys.argv) > 1:
             file_path = sys.argv[1]

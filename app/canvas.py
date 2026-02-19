@@ -1044,12 +1044,10 @@ class MCanvas3D(gl.GLViewWidget):
                     d = axis_vec * (1 if val > 0 else -1)
                     add_arrow(origin, d, color, is_moment)
                     
-
                     if is_selected:
                         l_type = "Moment" if is_moment else "Force"
                         self._add_load_label(origin, d, val, l_type, color)
 
-  
             c_black = (0, 0, 0, 1)
 
             process_component(load.fz, np.array([0, 0, 1.0]), c_black, False)
@@ -1727,7 +1725,6 @@ class MCanvas3D(gl.GLViewWidget):
         self._prev_mouse_pos = event.pos()
         modifiers = QApplication.keyboardModifiers()
         
-
         if event.button() == Qt.MouseButton.LeftButton:
             if self.snapping_enabled:
                 pos = event.pos()
@@ -1745,7 +1742,6 @@ class MCanvas3D(gl.GLViewWidget):
             self.signal_right_clicked.emit()
             super().mousePressEvent(event)
 
-    
     def mouseMoveEvent(self, event):
         if self.is_selecting:
             self.drag_current = event.pos()
@@ -1848,7 +1844,6 @@ class MCanvas3D(gl.GLViewWidget):
             m_proj = self.projectionMatrix(region=full_area, viewport=full_area)
             mvp = np.array((m_proj * m_view).data()).reshape(4, 4).T
             
-
             TEXT_WORLD_HEIGHT = 0.35
             
             font = painter.font()
@@ -1976,7 +1971,6 @@ class MCanvas3D(gl.GLViewWidget):
         super().keyPressEvent(event)
         event.ignore()
 
-    
     def _draw_member_loads(self, model):
         """
         Visualizes Distributed Loads (Ghost Fill Style).
@@ -2042,7 +2036,6 @@ class MCanvas3D(gl.GLViewWidget):
                 
                 if scale > 1.5: scale = 1.5 
 
-
                 sign = 1 if val > 0 else -1
                 
                 if load.coord_system == "Local":
@@ -2067,7 +2060,6 @@ class MCanvas3D(gl.GLViewWidget):
                 pt_base_2 = p2 + visual_shift
                 pt_top_1  = p1 + offset_vec + visual_shift
                 pt_top_2  = p2 + offset_vec + visual_shift
-
 
                 if not is_selected:
                     ghost_verts.extend([pt_base_1, pt_base_2, pt_top_2, pt_top_1])
@@ -2116,13 +2108,11 @@ class MCanvas3D(gl.GLViewWidget):
 
                 arrow_dir = -sign * load_vec 
 
-
                 pt_mid = (pt_base_1 + pt_base_2) / 2
                 draw_arrow(pt_mid, arrow_dir, c_line)
 
                 draw_arrow(pt_base_1, arrow_dir, c_line)
                 draw_arrow(pt_base_2, arrow_dir, c_line)
-
 
                 display_val = val * unit_registry.force_scale / unit_registry.length_scale
                 unit_str = unit_registry.distributed_load_unit
@@ -2161,7 +2151,6 @@ class MCanvas3D(gl.GLViewWidget):
             )
             self.addItem(lines)
             self.element_items.append(lines)
-
 
     def _draw_local_axes(self, model):
         """Draws RGB arrows at the center of each element representing local axes."""
@@ -2344,7 +2333,6 @@ class MCanvas3D(gl.GLViewWidget):
                 mode='lines', width=2.0, antialias=True
             ))
 
-
     def show_pivot_dot(self, visible=True):
         if visible:
                                                
@@ -2354,7 +2342,6 @@ class MCanvas3D(gl.GLViewWidget):
             self.pivot_timer.start(500)                                  
         else:
             self.pivot_dot.setVisible(False)
-
 
     def update_preview_line(self, start, end):
         """Updates the rubber-band preview line during draw mode."""
@@ -2456,7 +2443,6 @@ class MCanvas3D(gl.GLViewWidget):
             else:
                 self._draw_elements_wireframe(self.current_model)
 
-    
     def paintGL(self, *args, **kwargs):
         super().paintGL()
         

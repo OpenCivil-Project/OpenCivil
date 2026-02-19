@@ -49,7 +49,6 @@ class ViewCube:
         else:
             x_pos, y_pos = margin_px, margin_px
 
-        # 2. Save State
         glPushAttrib(GL_ALL_ATTRIB_BITS)
         glPushClientAttrib(GL_CLIENT_ALL_ATTRIB_BITS)
         glMatrixMode(GL_PROJECTION)
@@ -153,10 +152,9 @@ class ViewCube:
         glVertex3f( 0.15, radius, z_level)
         glEnd()
         
-        # Cardinal Ticks
         glBegin(GL_LINES)
         glColor4f(0.6, 0.6, 0.6, 0.5)
-        dirs = [(radius, 0), (-radius, 0), (0, -radius)] # E, W, S
+        dirs = [(radius, 0), (-radius, 0), (0, -radius)]          
         for dx, dy in dirs:
             glVertex3f(dx, dy, z_level)
             glVertex3f(dx * 0.9, dy * 0.9, z_level)
@@ -234,5 +232,5 @@ class ViewCube:
             rect_x = self.margin
             rect_y = height - self.size - self.margin
             
-        return (rect_x <= mouse_x <= rect_x + self.size) and \
+        return (rect_x <= mouse_x <= rect_x + self.size) and\
                (rect_y <= mouse_y <= rect_y + self.size)

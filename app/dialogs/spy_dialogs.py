@@ -332,12 +332,11 @@ class FBDViewerDialog(QDialog):
         arrow_len = 1.2
         y_pos = 0.5
 
-        # unit sign of force
         s = 1 if force > 0 else -1
 
-        if side == 'left':          # i-end
+        if side == 'left':                 
             dx = s * arrow_len
-        else:                       # j-end
+        else:                              
             dx =  s * arrow_len
 
         ax.arrow(
@@ -362,7 +361,6 @@ class FBDViewerDialog(QDialog):
                 linewidth=1.5
             )
         )
-
 
     def _draw_shear_arrow(self, ax, x_pos, force, side, beam_length=10):
         """Draw standard shear force arrow with unit label"""
@@ -415,7 +413,6 @@ class FBDViewerDialog(QDialog):
             bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
                     edgecolor=self.COLORS['moment'], linewidth=1.5)
         )
-
 
     def _draw_torsion(self, ax, x_pos, torque, side, beam_length=10):
         """Draw torsion moment with double-headed arrow and unit label"""
@@ -478,13 +475,12 @@ class FBDViewerDialog(QDialog):
                 x_pos = L_norm if node_offset == 6 else 0
                 scale = 1.5 * (1 if val > 0 else -1)
                 
-                # For axial forces (Fx), position arrows outside the nodes
-                if idx == 0:  # Axial force
+                if idx == 0:               
                     y_offset = 0.8
-                    # Start arrow outside the node along X axis
-                    if node_offset == 0:  # Left node
+                                                               
+                    if node_offset == 0:             
                         x_start = x_pos - 0.5
-                    else:  # Right node
+                    else:              
                         x_start = x_pos + 0.5
                     
                     ax.quiver(x_start, y_offset, 0, vec[0]*scale, vec[1]*scale, vec[2]*scale,
@@ -493,7 +489,7 @@ class FBDViewerDialog(QDialog):
                     text_pos = [x_start + vec[0]*scale*1.2, 
                                y_offset + vec[1]*scale*1.2,
                                vec[2]*scale*1.2]
-                else:  # Shear forces stay at node
+                else:                             
                     ax.quiver(x_pos, 0, 0, vec[0]*scale, vec[1]*scale, vec[2]*scale,
                              color=color, arrow_length_ratio=0.2, linewidth=2)
                     

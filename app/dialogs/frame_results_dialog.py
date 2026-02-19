@@ -24,7 +24,6 @@ class MemberAnalyzer:
         self.model = model
         self.n_stations = num_stations
         
-
         self.element_fef = np.zeros(12) 
 
         try:
@@ -42,7 +41,6 @@ class MemberAnalyzer:
                 print("Warning: Model does not have a file_path attribute. Cannot find matrices.")
         except Exception as e:
             print(f"Error loading FEF: {e}")
-
 
         self.L_clear = self.el.length()                                                               
         self.stations = np.linspace(0, self.L_clear, num_stations)

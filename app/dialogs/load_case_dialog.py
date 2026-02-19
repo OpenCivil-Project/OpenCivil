@@ -212,7 +212,6 @@ class LoadCaseDetailDialog(QDialog):
         
         layout.addWidget(self.group_settings)
 
-        
         h_btns = QHBoxLayout()
         h_btns.addStretch()
         btn_ok = QPushButton("OK")
@@ -257,7 +256,6 @@ class LoadCaseDetailDialog(QDialog):
         self.chk_pdelta.setVisible(is_nonlinear)     
         self.lbl_damp.setVisible(is_rsa)            
         self.input_damping.setVisible(is_rsa)       
-
 
         self.setWindowTitle("Load Case Data - " + text)
 

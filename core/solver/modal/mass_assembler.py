@@ -136,9 +136,7 @@ class GlobalMassAssembler:
                     R = get_rotation_matrix(p1_adj, p2_adj, el['beta'])
                     F_vec_global = R.T @ local_vec
 
-
                 F_vec_global *= multiplier
-
 
                 dist = load.get('dist', 0.5)
                 if not load.get('is_rel', True): dist = dist / el['L_total']
