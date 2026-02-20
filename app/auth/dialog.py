@@ -500,6 +500,21 @@ class LoginDialog(QDialog):
 
             ok, err, user_info = email_auth.login(email, password)
             if not ok:
+                if "verify your email" in err:
+                    self._set_status("Sending new verification code...", error=False)
+                    QApplication.processEvents()
+                    
+                    from . import email_service
+                    from .db import set_verify_code
+                    fresh_code = email_service.generate_code(6)
+                    set_verify_code(email, fresh_code)
+                    
+                    email_service.send_verification_email(email, "User", fresh_code)
+                    
+                    self._set_status("", error=False)
+                    self._reset_buttons()
+                    self._show_verify_dialog(email, "User")
+                    return
                 self._set_status(err, error=True)
                 self._reset_buttons()
                 return

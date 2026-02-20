@@ -88,26 +88,30 @@ class GoogleAuthManager:
             if not data.get('remember_me'):
                 return False
 
-            cred_data   = data['credentials']
-            credentials = Credentials(
-                token         = cred_data.get('token'),
-                refresh_token = cred_data.get('refresh_token'),
-                token_uri     = cred_data.get('token_uri'),
-                client_id     = cred_data.get('client_id'),
-                client_secret = cred_data.get('client_secret'),
-                scopes        = cred_data.get('scopes'),
-            )
+            self.user_info = data['user_info']
 
-            if credentials.expired and credentials.refresh_token:
-                credentials.refresh(Request())
-                logger.info("Refreshed expired credentials.")
+            if 'credentials' in data:
+                cred_data   = data['credentials']
+                credentials = Credentials(
+                    token         = cred_data.get('token'),
+                    refresh_token = cred_data.get('refresh_token'),
+                    token_uri     = cred_data.get('token_uri'),
+                    client_id     = cred_data.get('client_id'),
+                    client_secret = cred_data.get('client_secret'),
+                    scopes        = cred_data.get('scopes'),
+                )
 
-            if not credentials.valid:
-                self._remove_credentials_file()
-                return False
+                if credentials.expired and credentials.refresh_token:
+                    credentials.refresh(Request())
+                    logger.info("Refreshed expired credentials.")
 
-            self.credentials = credentials
-            self.user_info   = data['user_info']
+                if not credentials.valid:
+                    self._remove_credentials_file()
+                    return False
+                self.credentials = credentials
+            else:
+                self.credentials = None 
+
             return True
 
         except Exception as exc:
@@ -116,7 +120,7 @@ class GoogleAuthManager:
             return False
 
     def _save_credentials(self):
-        if not self.user_info or not self.credentials:
+        if not self.user_info:
             return
         try:
             payload = {
@@ -125,16 +129,18 @@ class GoogleAuthManager:
                     'name':    self.user_info.get('name'),
                     'email':   self.user_info.get('email'),
                     'picture': self.user_info.get('picture'),
-                },
-                'credentials': {
+                    'provider': self.user_info.get('provider', 'google')
+                }
+            }
+            if self.credentials:
+                payload['credentials'] = {
                     'token':         self.credentials.token,
                     'refresh_token': self.credentials.refresh_token,
                     'token_uri':     self.credentials.token_uri,
                     'client_id':     self.credentials.client_id,
                     'client_secret': self.credentials.client_secret,
                     'scopes':        list(self.credentials.scopes or []),
-                },
-            }
+                }
             path = GoogleAuthConfig.CREDENTIALS_FILE
             with open(path, 'w') as f:
                 json.dump(payload, f, indent=2)

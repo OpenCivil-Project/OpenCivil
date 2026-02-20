@@ -22,6 +22,18 @@ from linear_static.assembler import GlobalAssembler
 from linear_static.error_definitions import SolverException
 from mass_assembler import GlobalMassAssembler
 
+
+def _write_error(out_path, error_code, extra=""):
+    """Writes the error to JSON and returns True so the UI loads the error dialog."""
+    ex = SolverException(error_code, extra)
+    try:
+        with open(out_path, 'w') as f:
+            json.dump({"status": "FAILED", "error": ex.get_details()}, f, indent=4)
+    except:
+        pass
+    return True
+
+
 def run_modal_analysis(input_json_path, output_json_path):
     print("="*60)
     print(f"METUFIRE MODAL ENGINE | V0.3 (Shift-Invert)")
@@ -37,7 +49,7 @@ def run_modal_analysis(input_json_path, output_json_path):
         dm.process_all(case_name=target_case)
     except Exception as e:
         print(f"FATAL: Data Load Error: {e}")
-        return False
+        return _write_error(output_json_path, "E102", str(e))
 
     try:
         print("[2/6] Assembling System Matrices (K & M)...")
@@ -53,6 +65,9 @@ def run_modal_analysis(input_json_path, output_json_path):
         mass_assembler = GlobalMassAssembler(dm)
         M_full = mass_assembler.build_mass_matrix(ms_name)
 
+        if M_full.nnz == 0 or M_full.diagonal().sum() < 1e-9:
+            return _write_error(output_json_path, "E105", f"Mass Source '{ms_name}' resulted in zero mass.")
+
         results = {
             "status": "SUCCESS",
             "info": {"type": "Modal Analysis"},
@@ -62,7 +77,7 @@ def run_modal_analysis(input_json_path, output_json_path):
         
     except Exception as e:
         print(f"FATAL: Matrix Assembly Error: {e}")
-        return False
+        return _write_error(output_json_path, "E000", f"Matrix Assembly Error: {e}")
 
     print("[3/6] Applying Boundary Conditions...")
     
@@ -82,7 +97,7 @@ def run_modal_analysis(input_json_path, output_json_path):
     
     if num_free_dofs == 0:
         print("Error: Structure is fully constrained.")
-        return False
+        return _write_error(output_json_path, "E301", "Structure is fully constrained. No free DOFs.")
 
     K_free = K_full.tocsc()[is_free, :][:, is_free]
     M_free = M_full.tocsc()[is_free, :][:, is_free]
@@ -102,7 +117,7 @@ def run_modal_analysis(input_json_path, output_json_path):
 
         if req_modes < 1:
             print("Error: Cannot solve for 0 modes.")
-            return False
+            return _write_error(output_json_path, "E303", "Cannot solve for 0 modes. Free DOFs too low.")
 
         print(f"[4/6] Solving Eigenvalues (Shift-Invert @ -0.1)...")
         
@@ -116,7 +131,7 @@ def run_modal_analysis(input_json_path, output_json_path):
         print(f"FATAL: Eigen Solver Error: {e}")
         if "ARPACK" in str(e):
              print("      (Hint: The model might be extremely unstable or disconnected.)")
-        return False
+        return _write_error(output_json_path, "E303", str(e))
 
     print("[5/6] Calculating Modal Participation...")
     
@@ -271,7 +286,7 @@ def run_modal_analysis(input_json_path, output_json_path):
         return True
     except Exception as e:
         print(f"FATAL: Write Error: {e}")
-        return False
+        return _write_error(output_json_path, "E401", str(e))
 
 if __name__ == "__main__":
     test_in = os.path.join(current_dir, "test3.mf")

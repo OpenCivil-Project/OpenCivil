@@ -191,28 +191,38 @@ class GraphicsOptionsDialog(QDialog):
     def _on_restart(self):
         import subprocess, sys, os
         
-        if self.parent() and hasattr(self.parent(), "update_graphics_settings"):
-            self.parent().update_graphics_settings(self.get_settings())
+        parent = self.parent()
         
+        # 1. Apply the new graphics settings
+        if parent and hasattr(parent, "update_graphics_settings"):
+            parent.update_graphics_settings(self.get_settings())
+        
+        # 2. Grab the file path before the app shuts down
         file_path = None
-        if self.parent() and hasattr(self.parent(), "model"):
-            file_path = getattr(self.parent().model, "file_path", None)
-            if file_path and os.path.exists(file_path):
-                if hasattr(self.parent(), "on_save_model"):
-                    self.parent().on_save_model()
+        if parent and hasattr(parent, "model") and parent.model:
+            file_path = getattr(parent.model, "file_path", None)
 
+        # 3. Build the safe launch arguments using absolute paths
         if getattr(sys, 'frozen', False):
             args = [sys.executable]
-            if file_path:
-                args.append(file_path)
         else:
-            args = [sys.executable, sys.argv[0]]
-            if file_path:
-                args.append(file_path)
+            args = [sys.executable, os.path.abspath(sys.argv[0])]
+            
+        if file_path and os.path.exists(file_path):
+            args.append(os.path.abspath(file_path))
 
+        # 4. Trigger the main window's built-in close event!
+        # This triggers your "Unsaved Changes" dialog exactly like clicking the 'X' button.
+        if parent:
+            if not parent.close():
+                # If the user clicks 'Cancel' on the prompt, close() returns False. We abort!
+                return 
+
+        # 5. If they clicked Save or Discard, the app is closing. Launch the new one!
         subprocess.Popen(args)
-        self.parent().close()
+        self.accept()
 
+        
     def get_settings(self):
         """Collects all values from widgets and returns the dict."""
         return {

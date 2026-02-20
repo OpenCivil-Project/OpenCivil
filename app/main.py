@@ -975,17 +975,6 @@ class MainWindow(QMainWindow):
                 return True
         return False
     
-    def keyPressEvent(self, event):
-                                   
-        if event.key() == Qt.Key.Key_Delete:
-            if getattr(self, 'is_locked', False):
-                self.status.showMessage("⚠️ Cannot delete objects while Analysis Results are active. Unlock model first.")
-                return 
-            self.delete_current_selection()
-            return
-
-        super().keyPressEvent(event)
-
     def on_assign_restraints(self):
         if not hasattr(self, 'restraint_dlg') or not self.restraint_dlg.isVisible():
             from app.dialogs.restraint_dialog import RestraintDialog
@@ -1724,9 +1713,50 @@ def main():
             window.user_widget.raise_()
 
             def on_logout():
+                if window.model and not window.undo_stack.isClean():
+                    reply = QMessageBox.question(
+                        window,
+                        "Unsaved Changes",
+                        "You have unsaved changes in your model.\nDo you want to save before logging out?",
+                        QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+                        QMessageBox.StandardButton.Save
+                    )
+                    if reply == QMessageBox.StandardButton.Save:
+                        if not window.on_save_model():
+                            return 
+                    elif reply == QMessageBox.StandardButton.Cancel:
+                        return  
+
+                if hasattr(window, 'canvas'):
+
+                    if hasattr(window.canvas, 'animation_manager'):
+                        window.canvas.animation_manager.stop_animation()
+                    for item in window.canvas.items[:]:
+                        try:
+                            window.canvas.removeItem(item)
+                        except Exception:
+                            pass
+                    window.canvas.node_items.clear()
+                    window.canvas.element_items.clear()
+                    window.canvas.static_items.clear()
+                    window.canvas.current_model = None
+                    window.canvas.selected_element_ids = []
+                    window.canvas.selected_node_ids = []
+                    window.canvas.view_deflected = False
+                    window.canvas.invalidate_deflection_cache()
+                window.model = None
+                window.undo_stack.clear()
+                window.selected_ids = []
+                window.selected_node_ids = []
+                window.set_interface_state(False)
+                window.setWindowTitle("OPENCIVIL Analysis Engine")
+                window.status.showMessage("Welcome. Please create or open a model.")
+
                 if hasattr(window, 'user_widget'):
                     window.user_widget.deleteLater()
+
                 window.hide()
+
                 if auth_manager.login(parent=None):
                     window.showMaximized()
                     window.activateWindow()

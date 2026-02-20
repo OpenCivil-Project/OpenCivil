@@ -51,6 +51,12 @@ SOLVER_ERRORS = {
         "fix": "Check the spelling of the Load Case name or ensure at least one load case is defined in the input."
     },
 
+    "E105": {
+        "title": "Missing or Zero Mass Source",
+        "desc": "The solver calculated a total system mass of zero. Modal/Dynamic analysis requires mass to compute periods and mode shapes.",
+        "fix": "1. Go to Define > Mass Source and ensure it includes self-mass or applied loads.\n2. Verify your elements have materials with positive density."
+    },
+
     "E201": {
         "title": "Zero Length Element",
         "desc": "An element has a length of effectively zero (Start Node and End Node are coincident).",
@@ -76,6 +82,12 @@ SOLVER_ERRORS = {
         "title": "Huge Displacements Detected",
         "desc": "The solver calculated displacements exceeding reasonable limits (e.g., > 1e6 meters).",
         "fix": "Check your units (E modulus vs Load units). Ensure your model is restrained against rotation."
+    },
+
+    "E303": {
+        "title": "Eigen Solver Convergence Failure",
+        "desc": "The eigenvalue solver (ARPACK) could not converge or encountered a mathematical instability.",
+        "fix": "Your model might be completely unstable, disconnected, or lack mass in certain free directions. Check restraints, releases, and mass sources."
     },
 
     "E401": {
