@@ -11,6 +11,7 @@ if root_dir not in sys.path: sys.path.append(root_dir)
 from core.solver.linear_static.main_engine import run_linear_static_analysis
 from core.solver.modal.modal_engine import run_modal_analysis
 from core.solver.RSA.rsa_engine import RSAEngine
+from core.solver.LTHA.ltha_engine import run_ltha_analysis
 from core.model import StructuralModel 
 
 class SolverWorker(QThread):
@@ -30,6 +31,11 @@ class SolverWorker(QThread):
             
             if self.case_type == "Modal":
                 success = run_modal_analysis(self.input_path, self.output_path)
+                if success:
+                    import shutil
+                    modal_copy = self.output_path.replace("_results.json", "_MODAL_results.json")
+                    shutil.copy2(self.output_path, modal_copy)
+                    print(f"Worker: Modal results also saved to {modal_copy}")
 
             elif self.case_type == "Response Spectrum":
                                
@@ -160,6 +166,37 @@ class SolverWorker(QThread):
                 else:
                     print("Error: No RSA loads defined.")
                     success = False
+
+            elif self.case_type == "LTHA":
+                temp_model = StructuralModel("Temp")
+                try:
+                    temp_model.load_from_file(self.input_path)
+                except Exception as e:
+                    raise Exception(f"Failed to load model data for LTHA: {e}")
+
+                modal_output_path = self.output_path.replace("_results.json", "_MODAL_results.json")
+                                                                                        
+                import os
+                if not os.path.exists(modal_output_path):
+                    modal_output_path = self.output_path.replace("_results.json", "_MODAL_results.json").replace("_MODAL_results", "_results")
+                                                                
+                    base = self.output_path.replace("_results.json", "")
+                    candidates = [
+                        base + "_MODAL_results.json",
+                        base.rsplit("_", 1)[0] + "_MODAL_results.json" if "_" in base else "",
+                        os.path.join(os.path.dirname(self.output_path), "OCFiles_MODAL_results.json"),
+                    ]
+                    for c in candidates:
+                        if c and os.path.exists(c):
+                            modal_output_path = c
+                            break
+
+                success = run_ltha_analysis(
+                    modal_results_path=modal_output_path,
+                    model_data=temp_model.__dict__,
+                    output_path=self.output_path,
+                    case_name=self.case_name
+                )
 
             else:
                 success = run_linear_static_analysis(self.input_path, self.output_path, self.case_name)

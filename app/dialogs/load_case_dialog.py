@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QListWidget,
                              QPushButton, QLabel, QComboBox, QTableWidget, 
                              QTableWidgetItem, QGroupBox, QSpinBox, QCheckBox,
                              QMessageBox, QHeaderView, QLineEdit, QWidget,
-                             QRadioButton, QButtonGroup)
+                             QRadioButton, QButtonGroup, QFileDialog)
 from PyQt6.QtCore import Qt
 from core.model import LoadCase
 
@@ -53,7 +53,7 @@ class LoadCaseDetailDialog(QDialog):
         h_top.addWidget(QLabel("Load Case Type:"))
         self.combo_type = QComboBox()
                                       
-        self.combo_type.addItems(["Linear Static", "Modal", "Response Spectrum"])
+        self.combo_type.addItems(["Linear Static", "Modal", "Response Spectrum", "LTHA"])
         self.combo_type.setCurrentText(self.case.case_type)
         self.combo_type.currentTextChanged.connect(self.on_type_changed)
         h_top.addWidget(self.combo_type)
@@ -190,7 +190,38 @@ class LoadCaseDetailDialog(QDialog):
         
         layout_rsa.addWidget(grp_rsa_loads)
         layout.addWidget(self.group_rsa)
-                                                 
+
+        self.group_ltha = QGroupBox("Linear Time History Parameters")
+        v_ltha = QVBoxLayout(self.group_ltha)
+
+        h_ltha_opts = QHBoxLayout()
+        h_ltha_opts.addWidget(QLabel("Damping Ratio:"))
+        self.input_ltha_damping = QLineEdit()
+        self.input_ltha_damping.setText(str(getattr(self.case, 'damping', 0.05)))
+        self.input_ltha_damping.setFixedWidth(70)
+        h_ltha_opts.addWidget(self.input_ltha_damping)
+        h_ltha_opts.addStretch()
+        v_ltha.addLayout(h_ltha_opts)
+
+        self.table_ltha = QTableWidget()
+        self.table_ltha.setColumnCount(3)
+        self.table_ltha.setHorizontalHeaderLabels(["Direction", "Function", "Scale Factor"])
+        self.table_ltha.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table_ltha.setMaximumHeight(160)
+        v_ltha.addWidget(self.table_ltha)
+
+        h_ltha_btns = QHBoxLayout()
+        self.btn_ltha_add = QPushButton("Add")
+        self.btn_ltha_add.clicked.connect(self.add_ltha_row)
+        self.btn_ltha_del = QPushButton("Delete")
+        self.btn_ltha_del.clicked.connect(self.delete_ltha_row)
+        h_ltha_btns.addStretch()
+        h_ltha_btns.addWidget(self.btn_ltha_add)
+        h_ltha_btns.addWidget(self.btn_ltha_del)
+        v_ltha.addLayout(h_ltha_btns)
+
+        layout.addWidget(self.group_ltha)
+
         self.group_settings = QGroupBox("Extra Settings")
         v_set = QVBoxLayout(self.group_settings)
         
@@ -225,7 +256,8 @@ class LoadCaseDetailDialog(QDialog):
         layout.addLayout(h_btns)
         
         self.populate_loads()
-        self.populate_rsa()                             
+        self.populate_rsa()
+        self.populate_ltha()                                     
         self.on_type_changed(self.combo_type.currentText())
         
         if hasattr(self.case, 'modal_type'):
@@ -241,15 +273,16 @@ class LoadCaseDetailDialog(QDialog):
             else: self.radio_dir_srss.setChecked(True)
 
     def on_type_changed(self, text):
-        
         """Show/Hide UI elements based on case type"""
         is_modal = (text == "Modal")
         is_nonlinear = (text == "Nonlinear Static")
-        is_rsa = (text == "Response Spectrum")           
+        is_rsa = (text == "Response Spectrum")
+        is_ltha = (text == "LTHA")
         
-        self.group_loads.setVisible(not is_modal and not is_rsa)                            
+        self.group_loads.setVisible(not is_modal and not is_rsa and not is_ltha)
         self.group_modal.setVisible(is_modal)
-        self.group_rsa.setVisible(is_rsa)           
+        self.group_rsa.setVisible(is_rsa)
+        self.group_ltha.setVisible(is_ltha)
         
         self.group_settings.setVisible(is_nonlinear or is_rsa)
         
@@ -287,6 +320,67 @@ class LoadCaseDetailDialog(QDialog):
         cr = self.table.currentRow()
         if cr >= 0: self.table.removeRow(cr)
 
+    def add_ltha_row(self):
+        if self.table_ltha.rowCount() >= 3:
+            QMessageBox.information(self, "Limit Reached",
+                                    "Maximum 3 ground motion functions (X, Y, Z).")
+            return
+
+        row = self.table_ltha.rowCount()
+        self.table_ltha.insertRow(row)
+
+        cmb_dir = QComboBox()
+        cmb_dir.addItems(["X", "Y", "Z"])
+                                          
+        used = [self.table_ltha.cellWidget(r, 0).currentText()
+                for r in range(row)
+                if self.table_ltha.cellWidget(r, 0)]
+        for d in ["X", "Y", "Z"]:
+            if d not in used:
+                cmb_dir.setCurrentText(d)
+                break
+        self.table_ltha.setCellWidget(row, 0, cmb_dir)
+
+        cmb_func = QComboBox()
+        th_funcs = getattr(self.model, 'th_functions', {})
+        if th_funcs:
+            cmb_func.addItems(th_funcs.keys())
+        else:
+            cmb_func.addItem("(No functions defined)")
+        self.table_ltha.setCellWidget(row, 1, cmb_func)
+
+        self.table_ltha.setItem(row, 2, QTableWidgetItem("1.0"))
+
+    def delete_ltha_row(self):
+        cr = self.table_ltha.currentRow()
+        if cr >= 0:
+            self.table_ltha.removeRow(cr)
+
+    def populate_ltha(self):
+        """Populate the LTHA table from case.ltha_loads — called on init."""
+        self.table_ltha.setRowCount(0)
+        ltha_loads = getattr(self.case, 'ltha_loads', [])
+        th_funcs = getattr(self.model, 'th_functions', {})
+
+        for direction, func_name, scale in ltha_loads:
+            row = self.table_ltha.rowCount()
+            self.table_ltha.insertRow(row)
+
+            cmb_dir = QComboBox()
+            cmb_dir.addItems(["X", "Y", "Z"])
+            cmb_dir.setCurrentText(direction)
+            self.table_ltha.setCellWidget(row, 0, cmb_dir)
+
+            cmb_func = QComboBox()
+            if th_funcs:
+                cmb_func.addItems(th_funcs.keys())
+            else:
+                cmb_func.addItem("(No functions defined)")
+            cmb_func.setCurrentText(func_name)
+            self.table_ltha.setCellWidget(row, 1, cmb_func)
+
+            self.table_ltha.setItem(row, 2, QTableWidgetItem(str(scale)))
+
     def on_ok(self):
         """Validate name and RSA before closing"""
         new_name = self.input_name.text().strip()
@@ -307,7 +401,6 @@ class LoadCaseDetailDialog(QDialog):
 
     def get_data(self):
         """Returns a configured LoadCase object"""
-                                                                                              
         c = LoadCase(self.input_name.text().strip(), self.combo_type.currentText())
         
         c.p_delta = self.chk_pdelta.isChecked()
@@ -338,6 +431,28 @@ class LoadCaseDetailDialog(QDialog):
                         val = float(item_scale.text())
                     except: val = 1.0
                     c.rsa_loads.append((cmb_name.currentText(), cmb_func.currentText(), val))
+
+        elif c.case_type == "LTHA":
+            try:
+                c.damping = float(self.input_ltha_damping.text())
+            except ValueError:
+                c.damping = 0.05
+
+            c.ltha_loads = []
+            for r in range(self.table_ltha.rowCount()):
+                cmb_dir   = self.table_ltha.cellWidget(r, 0)
+                cmb_func  = self.table_ltha.cellWidget(r, 1)
+                item_scale = self.table_ltha.item(r, 2)
+                if cmb_dir and cmb_func and item_scale:
+                    try:
+                        scale = float(item_scale.text())
+                    except ValueError:
+                        scale = 1.0
+                    c.ltha_loads.append((
+                        cmb_dir.currentText(),
+                        cmb_func.currentText(),
+                        scale
+                    ))
         
         else:
             rows = self.table.rowCount()
@@ -352,7 +467,7 @@ class LoadCaseDetailDialog(QDialog):
                 c.loads.append((pattern, scale))
         
         return c
-    
+
     def validate_rsa_loads(self):
         """Check if vertical spectrum is wrongly applied to horizontal direction"""
         warnings = []
@@ -403,9 +518,7 @@ class LoadCaseDetailDialog(QDialog):
         if cr >= 0: self.table_rsa.removeRow(cr)
         
     def populate_rsa(self):
-                                                        
         self.table_rsa.setRowCount(0)
-                                                               
         rsa_loads = getattr(self.case, 'rsa_loads', [])
         
         for load_name, func_name, scale in rsa_loads:
@@ -504,7 +617,6 @@ class LoadCaseManagerDialog(QDialog):
     def refresh_list(self):
         self.list_widget.clear()
         for name, case in self.model.load_cases.items():
-                                                                              
             if isinstance(case, dict):
                  c_type = case.get("type", "Linear Static")                 
             else:
@@ -514,7 +626,6 @@ class LoadCaseManagerDialog(QDialog):
 
     def add_case(self):
         """Creates a new generic load case and opens the editor."""
-                                             
         idx = 1
         while f"CASE{idx}" in self.model.load_cases:
             idx += 1
@@ -524,7 +635,6 @@ class LoadCaseManagerDialog(QDialog):
         
         dlg = LoadCaseDetailDialog(self.model, temp_case, self, is_new=True)
         if dlg.exec():
-                              
             final_case = dlg.get_data()
             self.model.load_cases[final_case.name] = final_case
             self.refresh_list()
@@ -544,12 +654,9 @@ class LoadCaseManagerDialog(QDialog):
                 new_case = dlg.get_data()
                 
                 if new_case.name != old_name:
-                                       
                     del self.model.load_cases[old_name]
-                                    
                     self.model.load_cases[new_case.name] = new_case
                 else:
-                                            
                     self.model.load_cases[old_name] = new_case
                 
                 self.refresh_list()
@@ -565,4 +672,3 @@ class LoadCaseManagerDialog(QDialog):
             
         del self.model.load_cases[name]
         self.refresh_list()
-

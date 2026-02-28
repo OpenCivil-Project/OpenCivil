@@ -1,4 +1,3 @@
-                        
 import json
 from core.mesh import Node, FrameElement
 from core.properties import (Material, RectangularSection, ISection, GeneralSection,
@@ -77,6 +76,7 @@ class StructuralModel:
         self.create_default_cases()
         self.slabs = {}
         self.functions = {}
+        self.th_functions = {}
         self.constraints = {}
                          
         self.grid = GridLines()
@@ -293,7 +293,8 @@ class StructuralModel:
             "load_patterns": [],
             "loads": [],
             "mass_sources": [],
-            "functions": []
+            "functions": [],
+            "th_functions": []
         }
 
         for lc in self.load_cases.values():
@@ -307,7 +308,9 @@ class StructuralModel:
                 "rsa_loads": getattr(lc, 'rsa_loads', []),
                 "modal_comb": getattr(lc, 'modal_comb', 'SRSS'),
                 "dir_comb": getattr(lc, 'dir_comb', 'SRSS'),
-                "modal_damping": getattr(lc, 'modal_damping', 0.05) 
+                "modal_damping": getattr(lc, 'modal_damping', 0.05),
+                "ltha_damping": getattr(lc, 'damping', 0.05),
+                "ltha_loads": getattr(lc, 'ltha_loads', [])
             })
 
         for mat in self.materials.values():
@@ -425,8 +428,11 @@ class StructuralModel:
 
         if hasattr(self, 'functions'):
             for func_name, func_data in self.functions.items():
-                                                                                                 
                 data["functions"].append(func_data)
+
+        if hasattr(self, 'th_functions'):
+            for func_name, func_data in self.th_functions.items():
+                data["th_functions"].append(func_data)
 
         with open(filepath, 'w') as f:
             json.dump(data, f, indent=4)
@@ -441,6 +447,7 @@ class StructuralModel:
         self.sections.clear(); self.load_patterns.clear(); self.loads.clear()
         self.slabs.clear(); self.constraints.clear()
         self.functions = {}
+        self.th_functions = {}
         self._node_counter = 1; self._elem_counter = 1; self._slab_counter = 1 
         
         self.name = data["info"]["name"]
@@ -556,6 +563,8 @@ class StructuralModel:
                 new_lc.mass_source = lc_data.get("mass_source", "Default")
                 new_lc.num_modes = lc_data.get("num_modes", 12)
                 new_lc.modal_damping = lc_data.get("modal_damping", 0.05)
+                new_lc.damping    = lc_data.get("ltha_damping", 0.05)
+                new_lc.ltha_loads = [tuple(x) for x in lc_data.get("ltha_loads", [])]
                 
                 self.load_cases[name] = new_lc
         else:
@@ -584,6 +593,11 @@ class StructuralModel:
             for func_data in data["functions"]:
                 f_name = func_data["name"]
                 self.functions[f_name] = func_data
+
+        if "th_functions" in data:
+            for func_data in data["th_functions"]:
+                f_name = func_data.get("name", "THFUNC")
+                self.th_functions[f_name] = func_data
 
         if "loads" in data:
             for load_data in data["loads"]:
@@ -907,4 +921,5 @@ class LoadCase:
         self.mass_source = "Default"                        
         self.p_delta = False                                   
         self.modal_case = None                                                     
-        self.num_modes = 12                                
+        self.num_modes = 12
+        self.ltha_loads = []

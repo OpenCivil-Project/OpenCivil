@@ -348,7 +348,6 @@ class TrapezoidalSection(Section):
         self.w_bot = float(w_bot)
         self._calculate_properties()
 
-
     def _calculate_properties(self):
         d, a, b = self.d, self.w_top, self.w_bot
         self.A = (a + b) * d / 2
@@ -356,18 +355,15 @@ class TrapezoidalSection(Section):
         
         self.y_bar = (d / 3) * (2*a + b) / (a + b)
         
-        # Major and Minor moments of inertia (Exact Analytical)
         self.I22 = (d**3 / 36) * (a**2 + 4*a*b + b**2) / (a + b)
         self.I33 = (d / 48) * (a + b) * (a**2 + b**2)
         
-        # --- ROARK'S EQUIVALENT POLYNOMIAL FOR TORSION (J) ---
         w_avg = (a + b) / 2.0
         h_eff = max(d, w_avg)
         t_eff = min(d, w_avg)
         roark_factor = (1.0 / 3.0) - 0.21 * (t_eff / h_eff) * (1.0 - (t_eff**4) / (12.0 * h_eff**4))
         self.J = roark_factor * h_eff * (t_eff**3)
         
-        # --- ADVANCED SHEAR AREA APPROXIMATION ---
         taper_ratio = min(a, b) / max(a, b)
         
         factor_z = 0.83333 + 0.035 * (1.0 - taper_ratio) - 0.008 * (1.0 - taper_ratio)**2
@@ -376,7 +372,6 @@ class TrapezoidalSection(Section):
         factor_y = 0.83333 + 0.155 * (1.0 - taper_ratio) - 0.025 * (1.0 - taper_ratio)**2
         self.Asy = factor_y * self.A
         
-        # Section Moduli & Radii of Gyration
         c_top = d - self.y_bar
         c_bot = self.y_bar
         self.S33 = self.I33 / max(c_top, c_bot)
@@ -387,7 +382,6 @@ class TrapezoidalSection(Section):
         self.r33 = math.sqrt(self.I33 / self.A)
         self.r22 = math.sqrt(self.I22 / self.A)
 
-        
     def get_shape_coords(self):
         y_top = self.d - self.y_bar
         y_bot = -self.y_bar

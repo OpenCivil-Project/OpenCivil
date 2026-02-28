@@ -78,23 +78,23 @@ class NodeResultsDialog(QDialog):
         layout.addStretch()
 
     def load_initial_data(self):
-        """
-        Smart Loader: Checks for both Main Results (RSA/Static) AND Modal Results.
-        """
         self.combo_cases.blockSignals(True)
         self.combo_cases.clear()
         
         if "displacements" in self.results and self.results["displacements"]:
-            
             display_name = "Analysis Result"
             if "rsa_info" in self.results:
                 method = self.results["rsa_info"].get("method", "SRSS")
-                                                                          
                 display_name = f"RSA Final Result ({method})"
             elif self.results.get("info", {}).get("type") == "Linear Static":
                 display_name = "Linear Static"
+            elif self.results.get("info", {}).get("type") == "Linear Time History Analysis":
+                display_name = "LTHA Peak Envelope"
             
             self.combo_cases.addItem(display_name, "MAIN_RESULT")
+
+            if self.results.get("info", {}).get("type") == "Linear Time History Analysis":
+                self.combo_cases.addItem("LTHA Live Playback", "LTHA_LIVE")
 
         if "mode_shapes" in self.results:
             periods = self.results.get("tables", {}).get("periods", [])
@@ -113,25 +113,30 @@ class NodeResultsDialog(QDialog):
     def on_case_changed(self, index):
         if index < 0: return
         key = self.combo_cases.currentData()
-        
         vector = [0.0] * 6
         
         if key == "MAIN_RESULT":
-                                                 
             self.signal_mode_changed.emit("MAIN_RESULT") 
+                                                                                          
+            base_dict = self.results.get("_base_displacements", self.results.get("displacements", {}))
+            vector = base_dict.get(self.node_id, [0.0]*6)
+            self.lbl_info.setText("Displaying Peak Static Envelope.")
             
+        elif key == "LTHA_LIVE":
+            self.signal_mode_changed.emit("LTHA_LIVE")        
             vector = self.results.get("displacements", {}).get(self.node_id, [0.0]*6)
-            self.lbl_info.setText("Displaying Final Combined Displacements.")
-            
+            self.lbl_info.setText("Displaying Live Timestep.")
+
         elif str(key).startswith("Mode"):
-                                                                                      
             shapes = self.results.get("mode_shapes", {})
             mode_data = shapes.get(key, {})
             vector = mode_data.get(self.node_id, [0.0]*6)
             self.lbl_info.setText("Displaying Normalized Mode Shape.")
-            
             self.signal_mode_changed.emit(key)
-                              
+            
+        self._update_labels(vector)
+
+    def _update_labels(self, vector):
         ux_m, uy_m, uz_m = vector[0], vector[1], vector[2]
         rx, ry, rz = vector[3], vector[4], vector[5]
 
@@ -151,3 +156,9 @@ class NodeResultsDialog(QDialog):
         self.lbl_rx.setText(fmt(rx))
         self.lbl_ry.setText(fmt(ry))
         self.lbl_rz.setText(fmt(rz))
+
+    def update_live_values(self, t_index=None):
+                                              
+        if self.combo_cases.currentData() == "LTHA_LIVE":
+            vector = self.results.get("displacements", {}).get(self.node_id, [0.0]*6)
+            self._update_labels(vector)

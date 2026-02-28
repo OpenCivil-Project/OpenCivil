@@ -67,6 +67,17 @@ class MCanvas3D(gl.GLViewWidget):
         self.anim_factor = 1.0 
         self.animation_manager = AnimationManager(self)
         self.animation_manager.signal_frame_update.connect(self._on_anim_frame)
+        self.animation_manager.signal_ltha_frame_update.connect(self._on_ltha_frame)
+
+        self.ltha_history = None                                                
+        self.ltha_n_steps = 0
+        self.ltha_dt = 0.01
+        self.ltha_mode = False                                            
+        self.ltha_highlight = None                                                        
+
+        self._accel_overlay_pixmap    = None                                            
+        self._accel_overlay_size      = (0, 0)                                  
+        self._accel_overlay_last_step = -1                                                
         
         self.prerendered_geometry_frames = []                                 
         self.is_animation_cached = False                                           
@@ -1303,12 +1314,12 @@ class MCanvas3D(gl.GLViewWidget):
             return
 
         if self.is_animation_cached and self.prerendered_geometry_frames:
-                                                                
+                                                            
             frame_idx = self.animation_manager.current_frame_index
             
             if 0 <= frame_idx < len(self.prerendered_geometry_frames):
                 self._render_prerendered_frame(frame_idx)
-                return                                      
+                return                                
         
         self.draw_model(
             self.current_model, 
@@ -1316,6 +1327,92 @@ class MCanvas3D(gl.GLViewWidget):
             self.selected_node_ids
         )
     
+    def load_ltha_history(self, npz_path, dt, accel=None):
+        """
+        Loads the LTHA time history from a .npz file saved by ltha_engine.
+        accel can be:
+          - None
+          - a flat list (legacy single-direction)
+          - a dict {"X": [...], "Y": [...], ...} (new multi-direction)
+        """
+                                                  
+        if accel is None:
+            self.ltha_accel = None
+        elif isinstance(accel, dict):
+            self.ltha_accel = {d: np.array(v, dtype=np.float32)
+                               for d, v in accel.items() if v}
+        else:
+                                                           
+            self.ltha_accel = {"X": np.array(accel, dtype=np.float32)}
+
+        self.ltha_current_step = 0
+        self._accel_overlay_pixmap    = None                                          
+        self._accel_overlay_size      = (0, 0)
+        self._accel_overlay_last_step = -1
+        try:
+            data = np.load(npz_path)
+            self.ltha_history = {k[5:]: data[k] for k in data.files}
+            self.ltha_n_steps = next(iter(self.ltha_history.values())).shape[0]
+            self.ltha_dt = dt
+            self.ltha_mode = True
+            self.invalidate_animation_cache()
+            print(f"[Canvas] LTHA history loaded: {self.ltha_n_steps} steps, dt={dt}s, "
+                  f"{len(self.ltha_history)} nodes")
+        except Exception as e:
+            print(f"[Canvas] Failed to load LTHA history: {e}")
+            self.ltha_mode = False
+
+    def clear_ltha_history(self):
+        """Call when loading a different result or model."""
+        self.ltha_history = None
+        self.ltha_n_steps = 0
+        self.ltha_mode = False
+        self.ltha_accel = None
+        self.ltha_highlight = None
+        self.invalidate_animation_cache()
+
+    def _on_ltha_frame(self, t_index):
+        """
+        Called by AnimationManager in LTHA mode instead of _on_anim_frame.
+        Looks up displacements at timestep t_index from ltha_history,
+        temporarily patches model.results["displacements"], then redraws.
+
+        Args:
+            t_index (int): Timestep index into U_history (0 .. n_steps-1).
+        """
+        if not self.ltha_history or not self.current_model:
+            return
+
+        t = max(0, min(t_index, self.ltha_n_steps - 1))
+        self.ltha_current_step = t                                 
+
+        if self.is_animation_cached and self.prerendered_geometry_frames:
+            start_step = self.animation_manager.ltha_prerender_start
+            if start_step is None:
+                start_step = 0
+            frame_idx = t_index - start_step
+            if 0 <= frame_idx < len(self.prerendered_geometry_frames):
+                self.anim_factor = 1.0
+                self._render_prerendered_frame(frame_idx)
+                return
+
+        snapshot = {}
+        for nid_str, hist in self.ltha_history.items():
+            snapshot[nid_str] = hist[t].tolist()
+
+        self.anim_factor = 1.0
+        if self.current_model.results is None:
+            self.current_model.results = {}
+        self.current_model.results["displacements"] = snapshot
+
+        if self.view_deflected:
+            self.invalidate_deflection_cache()
+            self._force_draw_model(
+                self.current_model,
+                self.selected_element_ids,
+                self.selected_node_ids
+            )
+
     def invalidate_animation_cache(self):
         """
         Clears the pre-rendered animation geometry cache.
@@ -2423,16 +2520,10 @@ class MCanvas3D(gl.GLViewWidget):
     def invalidate_deflection_cache(self):
         """
         Clears the deflection cache when results or settings change.
-        Call this when:
-        - New analysis results loaded
-        - Deflection scale changed
-        - Model geometry changes
         """
         self.deflection_cache.clear()
         self.cache_scale_used = None
         
-        self.invalidate_animation_cache()
-
     def _smart_redraw(self):
         """
         Efficiently updates only the selection-dependent items.
@@ -2484,3 +2575,189 @@ class MCanvas3D(gl.GLViewWidget):
             self.view_cube.render(w, h, az, el, device_pixel_ratio=ratio)
         except Exception as e:
             print(f"ViewCube Error: {e}")
+
+        try:
+            accel = getattr(self, 'ltha_accel', None)
+            if accel is not None and len(accel) > 0:
+                self._draw_accel_overlay(accel)
+        except Exception as e:
+            print(f"Accel overlay error: {e}")
+
+    def _draw_accel_overlay(self, accel_dict):
+        """
+        Draws up to 3 accelerogram waveforms stacked vertically at the bottom.
+        accel_dict: dict {"X": np.array, "Y": np.array, "Z": np.array}
+
+        OPTIMISED: The static waveform (background, labels, zero-lines, highlight band)
+        is rendered once into a QPixmap and cached.  Every frame we only blit that
+        pixmap and then draw the playhead + time label on top.  This eliminates the
+        O(n_samples) Python loop from every paintGL call, making camera movement smooth.
+
+        Cache is invalidated when:
+          - Canvas is resized  (size changes)
+          - New LTHA data loaded  (load_ltha_history resets _accel_overlay_pixmap=None)
+          - ltha_highlight changes (handled via _invalidate_accel_pixmap())
+        """
+        from PyQt6.QtGui import QPainter, QPen, QColor, QFont, QPixmap
+        from PyQt6.QtCore import Qt, QRect, QPointF, QRectF
+
+        if not accel_dict:
+            return
+
+        directions = list(accel_dict.keys())[:3]
+        n_rows     = len(directions)
+
+        w = self.width()
+        h = self.height()
+
+        pad_l, pad_r  = 52, 16
+        row_h         = 58
+        pad_top       = 8
+        pad_bot_label = 18
+        panel_h       = row_h * n_rows + pad_bot_label
+        panel_y       = h - panel_h - 4
+        plot_x0       = pad_l
+        plot_x1       = w - pad_r
+        plot_w        = plot_x1 - plot_x0
+
+        ltha_n   = getattr(self, 'ltha_n_steps', 1)
+        ltha_dt  = getattr(self, 'ltha_dt', 0.01)
+        t_tot    = (ltha_n - 1) * ltha_dt if ltha_n > 1 else 1.0
+        current_step = getattr(self, 'ltha_current_step', 0)
+        t_cur    = current_step * ltha_dt
+
+        dir_colors = {
+            "X": QColor(80,  200, 120, 220),
+            "Y": QColor(80,  160, 255, 220),
+            "Z": QColor(255, 160,  60, 220),
+        }
+
+        highlight = getattr(self, 'ltha_highlight', None)
+
+        if self._accel_overlay_pixmap is None or self._accel_overlay_size != (w, h):
+            pixmap = QPixmap(w, h)
+            pixmap.fill(Qt.GlobalColor.transparent)
+
+            px = QPainter(pixmap)
+            px.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+            font_dir  = QFont("Consolas", 8, QFont.Weight.Bold)
+            font_info = QFont("Consolas", 8)
+
+            px.fillRect(0, panel_y, w, panel_h, QColor(10, 10, 10, 165))
+
+            pga_parts = []
+
+            for row_i, direction in enumerate(directions):
+                accel = accel_dict[direction]
+                n     = len(accel)
+                if n < 2:
+                    continue
+
+                a_max = float(np.max(np.abs(accel)))
+                if a_max < 1e-9:
+                    a_max = 1.0
+
+                row_y0  = panel_y + row_i * row_h + pad_top
+                row_y1  = panel_y + row_i * row_h + row_h - 4
+                row_h_p = row_y1 - row_y0
+                mid_y   = (row_y0 + row_y1) / 2.0
+
+                wave_color = dir_colors.get(direction, QColor(200, 200, 200, 200))
+
+                if highlight is not None:
+                    hl_start, hl_end = highlight
+                    hl_x0 = plot_x0 + (hl_start / t_tot) * plot_w
+                    hl_x1 = plot_x0 + (hl_end   / t_tot) * plot_w
+                    px.fillRect(QRectF(hl_x0, row_y0, hl_x1 - hl_x0, row_h_p),
+                                QColor(255, 200, 50, 40))
+                    pen_hl = QPen(QColor(255, 200, 50, 140), 1)
+                    pen_hl.setStyle(Qt.PenStyle.DashLine)
+                    px.setPen(pen_hl)
+                    px.drawLine(QPointF(hl_x0, row_y0), QPointF(hl_x0, row_y1))
+                    px.drawLine(QPointF(hl_x1, row_y0), QPointF(hl_x1, row_y1))
+
+                pen_wave = QPen(wave_color, 1.0)
+                px.setPen(pen_wave)
+                step     = max(1, n // int(plot_w))
+                prev_pt  = None
+                for i in range(0, n, step):
+                    pxi = plot_x0 + (i / (n - 1)) * plot_w
+                    pyi = mid_y - (accel[i] / a_max) * (row_h_p / 2.0) * 0.82
+                    pt  = QPointF(pxi, pyi)
+                    if prev_pt is not None:
+                        px.drawLine(prev_pt, pt)
+                    prev_pt = pt
+
+                pen_zero = QPen(QColor(150, 150, 150, 60), 1)
+                pen_zero.setStyle(Qt.PenStyle.DashLine)
+                px.setPen(pen_zero)
+                px.drawLine(QPointF(plot_x0, mid_y), QPointF(plot_x1, mid_y))
+
+                px.setFont(font_dir)
+                px.setPen(QPen(wave_color))
+                px.drawText(
+                    QRect(0, int(mid_y) - 7, pad_l - 6, 14),
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                    direction
+                )
+
+                px.setFont(font_info)
+                px.setPen(QPen(QColor(180, 180, 180, 180)))
+                px.drawText(
+                    QRect(int(plot_x1) - 120, int(row_y0), 120, 14),
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                    f"PGA {a_max:.3f} m/s²"
+                )
+
+                pga_parts.append(f"{direction}:{a_max:.3f}")
+
+                if row_i < n_rows - 1:
+                    pen_sep = QPen(QColor(80, 80, 80, 120), 1)
+                    px.setPen(pen_sep)
+                    sep_y = panel_y + (row_i + 1) * row_h
+                    px.drawLine(QPointF(plot_x0, sep_y), QPointF(plot_x1, sep_y))
+
+            px.end()
+
+            self._accel_overlay_pixmap    = pixmap
+            self._accel_overlay_size      = (w, h)
+            self._accel_overlay_pga_parts = pga_parts                       
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        painter.drawPixmap(0, 0, self._accel_overlay_pixmap)
+
+        font_info = QFont("Consolas", 8)
+
+        if ltha_n > 1:
+            ph_x     = plot_x0 + (current_step / (ltha_n - 1)) * plot_w
+            pen_head = QPen(QColor(255, 80, 80, 220), 1.5)
+            painter.setPen(pen_head)
+            for row_i in range(n_rows):
+                row_y0 = panel_y + row_i * row_h + pad_top
+                row_y1 = panel_y + row_i * row_h + row_h - 4
+                painter.drawLine(QPointF(ph_x, row_y0), QPointF(ph_x, row_y1))
+
+        label_y = panel_y + row_h * n_rows
+        painter.fillRect(0, label_y, w, pad_bot_label, QColor(10, 10, 10, 165))
+        pga_parts = getattr(self, '_accel_overlay_pga_parts', [])
+        pga_str   = "   ".join(pga_parts)
+        painter.setFont(font_info)
+        painter.setPen(QPen(QColor(200, 200, 200, 200)))
+        painter.drawText(
+            QRect(0, label_y, w, pad_bot_label),
+            Qt.AlignmentFlag.AlignCenter,
+            f"t = {t_cur:.2f}s / {t_tot:.2f}s      {pga_str}"
+        )
+
+        painter.end()
+
+    def _invalidate_accel_pixmap(self):
+        """
+        Call this whenever the static waveform content changes (e.g. highlight band
+        is updated).  Does NOT affect the LTHA data or animation state.
+        """
+        self._accel_overlay_pixmap = None
+        self._accel_overlay_size   = (0, 0)

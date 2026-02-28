@@ -100,6 +100,13 @@ def run_modal_analysis(input_json_path, output_json_path):
     K_free = K_full.tocsc()[is_free, :][:, is_free]
     M_free = M_full.tocsc()[is_free, :][:, is_free]
 
+    m_diag = M_free.diagonal()
+    min_nonzero_mass = m_diag[m_diag > 1e-10].min() * 1e-6
+    from scipy.sparse import diags
+    zero_mask = m_diag < 1e-10
+    reg = diags(zero_mask.astype(float) * min_nonzero_mass)
+    M_free = M_free + reg
+
     print(f"DEBUG: M_free sum = {M_free.sum():.6f}")
     print(f"DEBUG: M_free diagonal sum = {M_free.diagonal().sum():.6f}")
 
@@ -107,7 +114,7 @@ def run_modal_analysis(input_json_path, output_json_path):
         req_modes = modal_case_def.get("num_modes", 12) if modal_case_def else 12
   
         n_free_dofs = K_free.shape[0]
-        max_safe_modes = n_free_dofs - 2 if n_free_dofs > 20 else max(1, n_free_dofs // 3)
+        max_safe_modes = max(1, n_free_dofs - 2)
         safe_num_modes = min(req_modes, max_safe_modes)
         
         if safe_num_modes <= 0:
@@ -120,7 +127,21 @@ def run_modal_analysis(input_json_path, output_json_path):
 
         print(f"[4/6] Solving Eigenvalues (Shift-Invert @ -0.1)...")
         sigma_shift = -0.1
-        
+
+        print(f"K_free shape: {K_free.shape}")
+        print(f"M_free shape: {M_free.shape}")
+        print(f"K_free diagonal min: {K_free.diagonal().min():.6f}")
+        print(f"M_free diagonal min: {M_free.diagonal().min():.6f}")
+        print(f"M_free diagonal sum: {M_free.diagonal().sum():.6f}")
+
+        k_row_sums = np.abs(K_free).sum(axis=1).A1
+        zero_k_rows = np.where(k_row_sums < 1e-10)[0]
+        print(f"Zero rows in K_free: {len(zero_k_rows)} -> indices: {zero_k_rows[:10]}")
+
+        m_diag = M_free.diagonal()
+        zero_m_rows = np.where(m_diag < 1e-10)[0]
+        print(f"Zero diagonal in M_free: {len(zero_m_rows)} / {len(m_diag)}")
+                             
         vals, vecs = eigsh(K_free, M=M_free, k=req_modes, sigma=sigma_shift)
         
         print(f"      Converged. Found {len(vals)} modes.")
