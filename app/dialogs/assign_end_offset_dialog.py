@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                              QPushButton, QLineEdit, QGroupBox, QRadioButton, 
-                             QMessageBox, QGridLayout)
+                             QMessageBox, QGridLayout, QCheckBox)
 from PyQt6.QtCore import Qt
 from core.units import unit_registry
 from app.commands import CmdAssignEndOffsets                   
@@ -52,9 +52,15 @@ class AssignEndOffsetDialog(QDialog):
         param_layout.addWidget(lbl_j, 1, 0)
         param_layout.addWidget(self.input_off_j, 1, 1)
         param_layout.addWidget(QLabel(unit_len), 1, 2)
+
+        self.chk_diff_j = QCheckBox("Assign different End-J value")
+        param_layout.addWidget(self.chk_diff_j, 2, 0, 1, 3)
+        self.chk_diff_j.toggled.connect(self.toggle_j_input)
+        self.input_off_i.textChanged.connect(self.mirror_j)
+        self.input_off_j.setEnabled(False)
         
-        param_layout.addWidget(lbl_factor, 2, 0)
-        param_layout.addWidget(self.input_factor, 2, 1)
+        param_layout.addWidget(lbl_factor, 3, 0)
+        param_layout.addWidget(self.input_factor, 3, 1)
         
         grp_param.setLayout(param_layout)
         layout.addWidget(grp_param)
@@ -80,14 +86,26 @@ class AssignEndOffsetDialog(QDialog):
         """Enables/Disables inputs based on radio selection"""
         is_user = self.radio_user.isChecked()
         self.input_off_i.setEnabled(is_user)
-        self.input_off_j.setEnabled(is_user)
-        self.input_factor.setEnabled(True) 
+        self.input_factor.setEnabled(True)
+        self.chk_diff_j.setEnabled(is_user)
+        self.input_off_j.setEnabled(is_user and self.chk_diff_j.isChecked())
+
+    def toggle_j_input(self, checked):
+        self.input_off_j.setEnabled(checked)
+        if not checked:
+            self.input_off_j.setText(self.input_off_i.text())
+
+    def mirror_j(self, text):
+        if not self.chk_diff_j.isChecked():
+            self.input_off_j.setText(text)
 
     def reset_defaults(self):
         self.input_off_i.setText("0.0")
         self.input_off_j.setText("0.0")
         self.input_factor.setText("0.0")
         self.radio_user.setChecked(True)
+        self.chk_diff_j.setChecked(False)
+        self.input_off_j.setEnabled(False)
 
     def apply_changes(self):
         selected_ids = self.main_window.selected_ids

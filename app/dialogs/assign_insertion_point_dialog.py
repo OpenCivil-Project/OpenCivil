@@ -76,15 +76,21 @@ class AssignInsertionPointDialog(QDialog):
             grid.addWidget(lbl, i+1, 0)
             
             le_i = QLineEdit("0.0")
+            le_i.textChanged.connect(self.mirror_j)
             grid.addWidget(le_i, i+1, 1)
             self.inputs_i.append(le_i)
             
             le_j = QLineEdit("0.0")
+            le_j.setEnabled(False)
             grid.addWidget(le_j, i+1, 2)
             self.inputs_j.append(le_j)
             
             u_lbl = unit_registry.current_unit_label.split(",")[1].strip()
             grid.addWidget(QLabel(u_lbl), i+1, 3)
+
+        self.chk_diff_j = QCheckBox("Assign different End-J values")
+        off_layout.addWidget(self.chk_diff_j)
+        self.chk_diff_j.toggled.connect(self.toggle_j_inputs)
 
         off_layout.addLayout(grid)
         grp_off.setLayout(off_layout)
@@ -124,12 +130,25 @@ class AssignInsertionPointDialog(QDialog):
             self.row_labels[1].setText("Global Y:")
             self.row_labels[2].setText("Global Z:")
 
+    def toggle_j_inputs(self, checked):
+        for le_i, le_j in zip(self.inputs_i, self.inputs_j):
+            le_j.setEnabled(checked)
+            if not checked:
+                le_j.setText(le_i.text())
+
+    def mirror_j(self):
+        if not self.chk_diff_j.isChecked():
+            for le_i, le_j in zip(self.inputs_i, self.inputs_j):
+                le_j.setText(le_i.text())
+
     def reset_form(self):
         self.combo_cardinal.setCurrentIndex(9)
         for le in self.inputs_i: le.setText("0.0")
         for le in self.inputs_j: le.setText("0.0")
         self.chk_no_transform.setChecked(False)
         self.combo_sys.setCurrentText("Local")
+        self.chk_diff_j.setChecked(False)
+        for le_j in self.inputs_j: le_j.setEnabled(False)
 
     def apply_changes(self):
         selected_frames = self.main_window.selected_ids
