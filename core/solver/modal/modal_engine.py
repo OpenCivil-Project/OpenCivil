@@ -303,6 +303,21 @@ def run_modal_analysis(input_json_path, output_json_path):
         results["mode_shapes"][f"Mode {i+1}"] = shape_data
 
     try:
+        rot_results, total_mass_rot = compute_rotational_participation(
+            dm, M_full, M_free, is_free, vecs, vals
+        )
+        for i, row in enumerate(results["tables"]["participation_mass"]):
+            row.update(rot_results[i])
+        results["total_mass"].update({
+            "rx": total_mass_rot["Rx"],
+            "ry": total_mass_rot["Ry"],
+            "rz": total_mass_rot["Rz"]
+        })
+        print(f"      Rotational participation computed OK.")
+    except Exception as e:
+        print(f"WARNING: Rotational participation failed (non-fatal): {e}")
+
+    try:
         print("[6/6] Writing Results...")
         with open(output_json_path, 'w') as f:
             json.dump(results, f, indent=4)
@@ -311,6 +326,110 @@ def run_modal_analysis(input_json_path, output_json_path):
     except Exception as e:
         print(f"FATAL: Write Error: {e}")
         return _write_error(output_json_path, "E401", str(e))
+
+def compute_rotational_participation(dm, M_full, M_free, is_free, vecs, vals):
+    """
+    Computes rotational mass participation ratios (Rx, Ry, Rz) for each mode.
+    
+    Completely non-destructive - receives already-computed vecs/vals/M_free,
+    does NOT touch the main solver pipeline at all.
+    
+    Uses rigid-body rotation kinematics about the center of mass:
+      Rz: r_rz[Ux] = -(y-yCM), r_rz[Uy] = +(x-xCM), r_rz[Rz] = 1
+      Rx: r_rx[Uy] = -(z-zCM), r_rx[Uz] = +(y-yCM), r_rx[Rx] = 1
+      Ry: r_ry[Ux] = +(z-zCM), r_ry[Uz] = -(x-xCM), r_ry[Ry] = 1
+
+    Returns:
+        rot_results  : list of per-mode dicts with Rx/SumRx, Ry/SumRy, Rz/SumRz
+        total_mass_rot: dict with generalized rotational masses Rx, Ry, Rz
+    """
+    total_dofs = dm.total_dofs
+
+    M_diag_full = M_full.diagonal()
+    x_cm, y_cm, z_cm, total_m = 0.0, 0.0, 0.0, 0.0
+    for node in dm.nodes:
+        idx = node['idx'] * 6
+        m_avg = (M_diag_full[idx] + M_diag_full[idx+1] + M_diag_full[idx+2]) / 3.0
+        x, y, z = node['coords']
+        x_cm += m_avg * x
+        y_cm += m_avg * y
+        z_cm += m_avg * z
+        total_m += m_avg
+
+    if total_m > 1e-12:
+        x_cm /= total_m
+        y_cm /= total_m
+        z_cm /= total_m
+
+    print(f"[ROT] Center of Mass: ({x_cm:.3f}, {y_cm:.3f}, {z_cm:.3f})")
+
+    r_rx = np.zeros(total_dofs)
+    r_ry = np.zeros(total_dofs)
+    r_rz = np.zeros(total_dofs)
+
+    for node in dm.nodes:
+        idx = node['idx'] * 6
+        x, y, z = node['coords']
+        dx = x - x_cm
+        dy = y - y_cm
+        dz = z - z_cm
+
+        r_rz[idx + 0] = -dy   
+        r_rz[idx + 1] = +dx    
+        r_rz[idx + 5] = 1.0    
+
+        r_rx[idx + 1] = -dz    
+        r_rx[idx + 2] = +dy  
+        r_rx[idx + 3] = 1.0 
+
+
+        r_ry[idx + 0] = +dz   
+        r_ry[idx + 2] = -dx    
+        r_ry[idx + 4] = 1.0   
+
+
+    r_rx_free = r_rx[is_free]
+    r_ry_free = r_ry[is_free]
+    r_rz_free = r_rz[is_free]
+
+    total_mass_rx = float(r_rx_free @ M_free @ r_rx_free)
+    total_mass_ry = float(r_ry_free @ M_free @ r_ry_free)
+    total_mass_rz = float(r_rz_free @ M_free @ r_rz_free)
+
+    print(f"[ROT] Generalized Rotational Mass: Rx={total_mass_rx:.3f}, Ry={total_mass_ry:.3f}, Rz={total_mass_rz:.3f}")
+
+    rot_results = []
+    sum_rx, sum_ry, sum_rz = 0.0, 0.0, 0.0
+
+    for i in range(len(vals)):
+        phi_raw = vecs[:, i]
+        Mn_raw = float(phi_raw.T @ M_free @ phi_raw)
+        scale = 1.0 / np.sqrt(Mn_raw) if Mn_raw > 0 else 1.0
+        phi = phi_raw * scale
+        Mn = float(phi.T @ M_free @ phi)
+        if Mn == 0:
+            Mn = 1.0
+
+        L_rx = float(phi.T @ M_free @ r_rx_free)
+        L_ry = float(phi.T @ M_free @ r_ry_free)
+        L_rz = float(phi.T @ M_free @ r_rz_free)
+
+        ratio_rx = (L_rx**2 / Mn) / total_mass_rx if total_mass_rx > 0 else 0.0
+        ratio_ry = (L_ry**2 / Mn) / total_mass_ry if total_mass_ry > 0 else 0.0
+        ratio_rz = (L_rz**2 / Mn) / total_mass_rz if total_mass_rz > 0 else 0.0
+
+        sum_rx += ratio_rx
+        sum_ry += ratio_ry
+        sum_rz += ratio_rz
+
+        rot_results.append({
+            "Rx": ratio_rx, "SumRx": sum_rx,
+            "Ry": ratio_ry, "SumRy": sum_ry,
+            "Rz": ratio_rz, "SumRz": sum_rz,
+        })
+
+    return rot_results, {"Rx": total_mass_rx, "Ry": total_mass_ry, "Rz": total_mass_rz}
+
 
 if __name__ == "__main__":
     test_in = os.path.join(current_dir, "test3.mf")

@@ -300,7 +300,7 @@ class AddSectionDialog(QDialog):
         self.model = model
         self.section_data = section_data
         
-        self.selected_color = (0.75, 0.75, 0.75, 1.0)
+        self.selected_color = (0.259, 0.110, 0.749, 1.0)
         self.current_modifiers = {"A":1.0, "As2":1.0, "As3":1.0, "J":1.0, "I2":1.0, "I3":1.0, "Mass":1.0, "Weight":1.0}
 
         self.setup_ui()

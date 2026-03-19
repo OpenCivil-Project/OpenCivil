@@ -26,8 +26,8 @@ class MCanvas3D(gl.GLViewWidget):
             "node_size": 6,
             "node_color": (1, 1, 0, 1),
             "line_width": 2.0,
-            "extrude_opacity": 0.35,
-            "show_edges": False,
+            "extrude_opacity": 0.65,
+            "show_edges": True,
             "edge_width": 1.5,
             "edge_color": (0, 0, 0, 1),
             "slab_opacity": 0.4
@@ -42,10 +42,10 @@ class MCanvas3D(gl.GLViewWidget):
         self.current_model = None
         self.selected_element_ids = [] 
         self.selected_node_ids = [] 
-        self.view_extruded = False
+        self.view_extruded = True
         self.snapping_enabled = False
         self.load_labels = []
-        self.view_extruded = False 
+        self.view_extruded = True 
         self.show_joints = True      
         self.show_supports = True    
         self.show_releases = True   

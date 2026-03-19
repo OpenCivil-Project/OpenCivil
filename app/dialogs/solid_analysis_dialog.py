@@ -114,7 +114,7 @@ class SolidAnalysisDialog(QDialog):
         self.spin_mesh = QDoubleSpinBox()
         self.spin_mesh.setRange(0.01, 10.0); self.spin_mesh.setValue(0.15)
         self.spin_mesh.setSingleStep(0.05);  self.spin_mesh.setDecimals(3)
-        self.spin_mesh.setFixedWidth(80)
+        self.spin_mesh.setFixedWidth(120)
         self.spin_mesh.setToolTip("Target edge length for Gmsh tet mesh (m).\nSmaller = finer = slower.")
         gl.addWidget(self.spin_mesh); gl.addStretch()
         root.addWidget(grp)
@@ -168,8 +168,9 @@ class SolidAnalysisDialog(QDialog):
 
     def _populate_load_cases(self):
         self.combo_case.clear()
-        for name in sorted(self.model.load_cases.keys()):
-            self.combo_case.addItem(name)
+        for name, lc in sorted(self.model.load_cases.items()):
+            if lc.case_type == "Linear Static":
+                self.combo_case.addItem(name)
 
     def _ensure_saved(self):
         path = getattr(self.model, 'file_path', None)
@@ -220,6 +221,24 @@ class SolidAnalysisDialog(QDialog):
     def _on_run(self):
         if self._dm is None:
             QMessageBox.warning(self, "No Mesh", "Run  ▶ Create Mesh  first."); return
+
+        dofs = self._dm.total_dofs
+        if dofs >= 1_000_000:
+            QMessageBox.critical(self, "Model Too Large",
+                f"This mesh has {dofs:,} DOFs — analysis is blocked above 1,000,000 DOFs.\n"
+                f"Increase the mesh size and re-mesh.")
+            return
+        elif dofs >= 500_000:
+            reply = QMessageBox.question(self, "Very Large Model",
+                f"This mesh has {dofs:,} DOFs.\nAnalysis may take several hours. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply != QMessageBox.StandardButton.Yes: return
+        elif dofs >= 200_000:
+            reply = QMessageBox.question(self, "Large Model",
+                f"This mesh has {dofs:,} DOFs.\nAnalysis may take a few minutes. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply != QMessageBox.StandardButton.Yes: return
+
         mf_path = self._ensure_saved()
         if not mf_path: return
         self._set_busy(True, "Solving…")
@@ -255,10 +274,10 @@ class SolidAnalysisDialog(QDialog):
             tmp.close()
             self._pkl_path = tmp.name
 
-            subprocess.Popen(
-                [sys.executable, _VIEWER_SCRIPT, self._pkl_path],
-                close_fds=True
-            )
+            if getattr(sys, 'frozen', False):
+                subprocess.Popen([sys.executable, self._pkl_path], close_fds=True)
+            else:
+                subprocess.Popen([sys.executable, _VIEWER_SCRIPT, self._pkl_path], close_fds=True)
             self.close()
 
         except Exception as e:

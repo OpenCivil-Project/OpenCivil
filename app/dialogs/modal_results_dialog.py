@@ -123,9 +123,11 @@ class ModalResultsDialog(QDialog):
             self.tabs.addTab(self.tab_periods, "Modal Periods")
 
             self.tab_ratios = self.create_table(
-                ["Mode", "Ux Ratio", "Sum Ux", "Uy Ratio", "Sum Uy", "Uz Ratio", "Sum Uz"],
+                ["Mode", "Ux Ratio", "Sum Ux", "Uy Ratio", "Sum Uy", "Uz Ratio", "Sum Uz",
+                 "Rx Ratio", "Sum Rx", "Ry Ratio", "Sum Ry", "Rz Ratio", "Sum Rz"],
                 self.results["tables"]["participation_mass"],
-                ["mode", "Ux", "SumUx", "Uy", "SumUy", "Uz", "SumUz"]
+                ["mode", "Ux", "SumUx", "Uy", "SumUy", "Uz", "SumUz",
+                 "Rx", "SumRx", "Ry", "SumRy", "Rz", "SumRz"]
             )
             self.tabs.addTab(self.tab_ratios, "Mass Participation")
 

@@ -1837,8 +1837,40 @@ def main():
 
     app = QApplication(sys.argv)
 
+    if getattr(sys, 'frozen', False):
+        pkl_path = next((arg for arg in sys.argv if arg.endswith('.pkl')), None)
+        if pkl_path and os.path.exists(pkl_path):
+            from core.solver.solid_elements.solid_results_viewer import SolidResultsViewer, _DmProxy
+            import pickle
+            
+            try:
+                with open(pkl_path, 'rb') as f:
+                    data = pickle.load(f)
+                try:
+                    os.unlink(pkl_path)  
+                except Exception:
+                    pass
+                    
+                dm_proxy = _DmProxy(
+                    nodes=data['nodes'], 
+                    elements=data['elements'], 
+                    total_dofs=data['total_dofs']
+                )
+                viewer = SolidResultsViewer(dm_proxy, data['stress_results'], U_full=data.get('U_full'))
+
+                icon_path = os.path.join(root_dir, "graphic", "logo.png")
+                if os.path.exists(icon_path):
+                    from PyQt6.QtGui import QIcon
+                    viewer.setWindowIcon(QIcon(icon_path))
+                    
+                viewer.show()
+                sys.exit(app.exec())
+            except Exception as e:
+                print(f"Failed to launch Solid Viewer: {e}")
+                sys.exit(1)
+
     from PyQt6.QtGui import QSurfaceFormat
-    import json, os
+    import json
 
     prefs_path = os.path.join(os.path.expanduser("~"), ".opencivil_prefs.json")
     msaa_map = {0: 0, 1: 4, 2: 8, 3: 16}
@@ -1954,40 +1986,7 @@ def main():
 
             window.user_widget.logout_requested.connect(on_logout)
 
-        QTimer.singleShot(150, attach_user_widget)               
-        
         if len(sys.argv) > 1:
-                                                                            
-            pkl_path = next((arg for arg in sys.argv if arg.endswith('.pkl')), None)
-            if pkl_path and os.path.exists(pkl_path):
-                from core.solver.solid_elements.solid_results_viewer import SolidResultsViewer, _DmProxy
-                import pickle
-                
-                try:
-                    with open(pkl_path, 'rb') as f:
-                        data = pickle.load(f)
-                    try:
-                        os.unlink(pkl_path)                                  
-                    except Exception:
-                        pass
-                        
-                    dm_proxy = _DmProxy(
-                        nodes=data['nodes'], 
-                        elements=data['elements'], 
-                        total_dofs=data['total_dofs']
-                    )
-                    viewer = SolidResultsViewer(dm_proxy, data['stress_results'], U_full=data.get('U_full'))
-                    
-                    icon_path = os.path.join(root_dir, "graphic", "logo.png")
-                    if os.path.exists(icon_path):
-                        viewer.setWindowIcon(QIcon(icon_path))
-                        
-                    viewer.show()
-                    sys.exit(app.exec())
-                except Exception as e:
-                    print(f"Failed to launch Solid Viewer: {e}")
-                    sys.exit(1)
-                                                                            
             file_path = sys.argv[1]
             if os.path.exists(file_path) and file_path.endswith('.mf'):
                 try:
