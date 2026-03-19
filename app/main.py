@@ -57,6 +57,7 @@ from app.dialogs.mass_source_dialog import MassSourceManagerDialog
 from app.dialogs.modal_results_dialog import ModalResultsDialog
 from auth import GoogleAuthManager, UserProfileWidget
 from app.dialogs.time_history_manager import TimeHistoryManagerDialog
+from app.dialogs.solid_analysis_dialog import SolidAnalysisDialog
 
 class OPENCIVILSplash(QSplashScreen):
     def __init__(self, pixmap):
@@ -407,6 +408,11 @@ class MainWindow(QMainWindow):
         self.run_action.setShortcut("F5") 
         self.run_action.triggered.connect(self.on_run_analysis_dialog)
         self.menu_analyze.addAction(self.run_action)
+        self.menu_analyze.addSeparator()
+
+        self.solid_run_action = QAction("Run Solid Analysis...", self)
+        self.solid_run_action.triggered.connect(self.on_run_solid_analysis)
+        self.menu_analyze.addAction(self.solid_run_action)
 
         self.menu_analyze.addAction(self.btn_deform)
 
@@ -468,6 +474,7 @@ class MainWindow(QMainWindow):
         self.menu_draw.setEnabled(editable)
         self.menu_assign.setEnabled(editable)
         self.run_action.setEnabled(editable)
+        self.solid_run_action.setEnabled(editable)
         self.res_action.setEnabled(not editable)
 
         if hasattr(self, 'menu_edit'):
@@ -1818,6 +1825,11 @@ class MainWindow(QMainWindow):
             
             self.status.showMessage("Pre-animation cleared. Full time history ready.")
 
+    def on_run_solid_analysis(self):
+        if not self.model: return
+        dlg = SolidAnalysisDialog(self)
+        dlg.show()  
+
 def main():
     if sys.platform == 'win32':
         myappid = 'metu.civil.OPENCIVIL.v03'
@@ -1945,9 +1957,39 @@ def main():
         QTimer.singleShot(150, attach_user_widget)               
         
         if len(sys.argv) > 1:
+                                                                            
+            pkl_path = next((arg for arg in sys.argv if arg.endswith('.pkl')), None)
+            if pkl_path and os.path.exists(pkl_path):
+                from core.solver.solid_elements.solid_results_viewer import SolidResultsViewer, _DmProxy
+                import pickle
+                
+                try:
+                    with open(pkl_path, 'rb') as f:
+                        data = pickle.load(f)
+                    try:
+                        os.unlink(pkl_path)                                  
+                    except Exception:
+                        pass
+                        
+                    dm_proxy = _DmProxy(
+                        nodes=data['nodes'], 
+                        elements=data['elements'], 
+                        total_dofs=data['total_dofs']
+                    )
+                    viewer = SolidResultsViewer(dm_proxy, data['stress_results'], U_full=data.get('U_full'))
+                    
+                    icon_path = os.path.join(root_dir, "graphic", "logo.png")
+                    if os.path.exists(icon_path):
+                        viewer.setWindowIcon(QIcon(icon_path))
+                        
+                    viewer.show()
+                    sys.exit(app.exec())
+                except Exception as e:
+                    print(f"Failed to launch Solid Viewer: {e}")
+                    sys.exit(1)
+                                                                            
             file_path = sys.argv[1]
             if os.path.exists(file_path) and file_path.endswith('.mf'):
-                                                
                 try:
                     if window.model is None:
                         window.model = StructuralModel("Loaded Project")

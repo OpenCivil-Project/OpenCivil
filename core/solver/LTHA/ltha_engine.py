@@ -137,7 +137,7 @@ def run_ltha_analysis(modal_results_path, model_data, output_path, case_name="LT
 
             q_n, _, _ = newmark_elastic_sdof(accel_eff, dt, T, zeta, m=1.0)
 
-            if i == 0:  # mode 1 only
+            if i == 0:               
                 print(f"\n--- DEBUG MODE 1 ---")
                 print(f"  pm dict = {pm}")
                 print(f"  T = {T:.4f} s")
