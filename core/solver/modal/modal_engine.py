@@ -382,11 +382,9 @@ def compute_rotational_participation(dm, M_full, M_free, is_free, vecs, vals):
         r_rx[idx + 2] = +dy  
         r_rx[idx + 3] = 1.0 
 
-
         r_ry[idx + 0] = +dz   
         r_ry[idx + 2] = -dx    
         r_ry[idx + 4] = 1.0   
-
 
     r_rx_free = r_rx[is_free]
     r_ry_free = r_ry[is_free]
@@ -429,7 +427,6 @@ def compute_rotational_participation(dm, M_full, M_free, is_free, vecs, vals):
         })
 
     return rot_results, {"Rx": total_mass_rx, "Ry": total_mass_ry, "Rz": total_mass_rz}
-
 
 if __name__ == "__main__":
     test_in = os.path.join(current_dir, "test3.mf")

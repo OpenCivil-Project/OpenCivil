@@ -27,7 +27,7 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
-
+*.egg-info/
 venv/
 env/
 .venv/
@@ -57,3 +57,4 @@ Example_Project/Example_File_matrices.json
 Example_Project/Example_File_results.json
 Example_Project/Example_File.mf
 Example_Project/Example_File.mf
+Example_Project/Example_File_MODAL_results.json

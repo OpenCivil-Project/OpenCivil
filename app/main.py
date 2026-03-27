@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QAction, QPixmap,QCursor, QVector3D, QColor, QIcon
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, 
                              QMessageBox, QFileDialog, QSplashScreen, QLabel, 
-                             QComboBox,QProgressBar, QProgressDialog)
+                             QComboBox,QProgressBar, QProgressDialog, QSplitter, QSizePolicy)
 from PyQt6.QtWidgets import QMenu
 from PyQt6.QtGui import QCursor
 from PyQt6.QtGui import QUndoStack  
@@ -55,9 +55,10 @@ from app.dialogs.spy_dialogs import MatrixSpyDialog, FBDViewerDialog
 from app.dialogs.deformed_shape_dialog import DeformedShapeDialog
 from app.dialogs.mass_source_dialog import MassSourceManagerDialog
 from app.dialogs.modal_results_dialog import ModalResultsDialog
-from auth import GoogleAuthManager, UserProfileWidget
+from app.auth import GoogleAuthManager, UserProfileWidget
 from app.dialogs.time_history_manager import TimeHistoryManagerDialog
 from app.dialogs.solid_analysis_dialog import SolidAnalysisDialog
+from core.terminal_panel import TerminalPanel
 
 class OPENCIVILSplash(QSplashScreen):
     def __init__(self, pixmap):
@@ -352,13 +353,41 @@ class MainWindow(QMainWindow):
         self.btn_opts.setShortcut("Ctrl+W")
         self.btn_opts.triggered.connect(self.on_view_options)
         self.toolbar.addAction(self.btn_opts)
-        
+
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.toolbar.addWidget(spacer)
+
+        self.btn_cli = QAction(">_", self)
+        self.btn_cli.setToolTip("Toggle Terminal  (Ctrl+`)")
+        self.btn_cli.setShortcut("Ctrl+`")
+        self.btn_cli.triggered.connect(self._toggle_terminal)
+        self.toolbar.addAction(self.btn_cli)
+
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QVBoxLayout(self.central_widget)
-        
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
+
         self.canvas = MCanvas3D()
-        self.layout.addWidget(self.canvas)
+
+        self.splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter.addWidget(self.canvas)
+        self.splitter.setChildrenCollapsible(False)
+        self.layout.addWidget(self.splitter)
+
+        self.terminal_panel = TerminalPanel(
+            model=None,
+            on_model_modified=self.refresh_canvas,
+            on_file_opened=self._on_cli_file_opened,          
+            on_model_saved=self._on_cli_model_saved,
+            on_solve_requested=self.start_analysis_sequence,
+            on_unlock=self.on_lock_clicked,
+            parent=self
+        )
+        self.splitter.addWidget(self.terminal_panel)
+        self.splitter.setSizes([700, 0])   
 
         self.menu_assign = menubar.addMenu("Assign")
         
@@ -550,6 +579,7 @@ class MainWindow(QMainWindow):
             if dialog.accepted_data:
                 data = dialog.grid_data
                 self.model = StructuralModel("New Project")
+                self.terminal_panel.set_model(self.model)
                 self.undo_stack.clear()
 
                 if not hasattr(self.model, 'mass_sources'):
@@ -593,6 +623,7 @@ class MainWindow(QMainWindow):
         if filename:
             try:
                 self.model = StructuralModel("Loaded Project")
+                self.terminal_panel.set_model(self.model)
                 self.model.load_from_file(filename)
                 self.undo_stack.clear()
                 self.model.file_path = filename
@@ -659,6 +690,7 @@ class MainWindow(QMainWindow):
 
                 self.model.save_to_file(filename)
                 self.model.file_path = filename
+                self.model.active_model_path = filename
                 
                 self.undo_stack.setClean() 
                                             
@@ -763,6 +795,7 @@ class MainWindow(QMainWindow):
                 self.canvas._draw_start = (self.draw_start_node.x, self.draw_start_node.y, self.draw_start_node.z)
                 
                 self.status.showMessage(f"Element Drawn. Next Start: Node {end_node.id}...")
+                print(f"> GUI: Added Frame with Section '{section.name}' to Node {end_node.id}")
             else:
                 self.status.showMessage("Error: No Section Selected")
 
@@ -989,7 +1022,9 @@ class MainWindow(QMainWindow):
         
         self.selected_ids = [] 
         self.selected_node_ids = []
-        
+        msg = f"Deleted {len(final_elem_ids)} Frames and {len(final_node_ids)} Joints."
+        self.status.showMessage(msg)
+        print(f"> GUI: {msg}")
         self.status.showMessage(f"Deleted {len(final_elem_ids)} Frames and {len(final_node_ids)} Joints.")
 
     def is_node_connected(self, node_id):
@@ -1057,6 +1092,7 @@ class MainWindow(QMainWindow):
         self.model.add_slab(selected_nodes, thickness=0.2)
         self.canvas.draw_model(self.model)
         self.status.showMessage(f"Slab Created with {len(selected_nodes)} nodes.")
+        print(f"> GUI: Slab created using {len(selected_nodes)} selected nodes.")
 
     def on_view_options(self):
         current_settings = {
@@ -1348,6 +1384,7 @@ class MainWindow(QMainWindow):
                     self.canvas.animation_manager.disable_ltha_mode()
 
             self.btn_deform.setEnabled(True)
+            self.canvas.view_deflected = True
             
             self.lock_model()
             self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
@@ -1733,13 +1770,27 @@ class MainWindow(QMainWindow):
         is_ltha = self.model.results.get("info", {}).get("type") == "Linear Time History Analysis"
 
         if mode_key != "LTHA_LIVE" and not (mode_key == "MAIN_RESULT" and is_ltha):
+                                                                 
             max_disp = 0.0
             for vec in target_data.values():
                 d = (vec[0]**2 + vec[1]**2 + vec[2]**2)**0.5
                 if d > max_disp: max_disp = d
                 
-            if max_disp > 1e-9: 
-                auto_scale = 2.0 / max_disp
+            nodes = self.model.nodes.values()
+            if nodes and max_disp > 1e-9:
+                dx = max(n.x for n in nodes) - min(n.x for n in nodes)
+                dy = max(n.y for n in nodes) - min(n.y for n in nodes)
+                dz = max(n.z for n in nodes) - min(n.z for n in nodes)
+                
+                diag_length = (dx**2 + dy**2 + dz**2)**0.5
+                
+                if diag_length < 1e-6:
+                                                                    
+                    auto_scale = 2.0 / max_disp
+                else:
+                                                                                               
+                    target_visual_size = diag_length * 0.05
+                    auto_scale = target_visual_size / max_disp
             else:
                 auto_scale = 1.0
 
@@ -1829,6 +1880,55 @@ class MainWindow(QMainWindow):
         if not self.model: return
         dlg = SolidAnalysisDialog(self)
         dlg.show()  
+
+    def refresh_canvas(self):
+        if self.model:
+            self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
+
+    def _toggle_terminal(self):
+        self.terminal_panel.toggle()
+        if self.terminal_panel.isVisible():
+            total = self.splitter.height()
+            self.splitter.setSizes([total - 220, 220])
+        else:
+            self.splitter.setSizes([self.splitter.height(), 0])
+
+    def _on_cli_file_opened(self, new_model):
+        """Called by TerminalPanel when the CLI 'open' command succeeds."""
+        self.model = new_model
+        self.undo_stack.clear()
+
+        if new_model.graphics_settings:
+            self.graphics_settings.update(new_model.graphics_settings)
+            self.canvas.view_extruded         = self.graphics_settings.get('view_extruded', False)
+            self.canvas.show_slabs            = self.graphics_settings.get('show_slabs', True)
+            self.canvas.show_joints           = self.graphics_settings.get('show_joints', True)
+            self.canvas.show_supports         = self.graphics_settings.get('show_supports', True)
+            self.canvas.show_loads            = self.graphics_settings.get('show_loads', True)
+            self.canvas.show_local_axes       = self.graphics_settings.get('show_local_axes', False)
+            self.canvas.show_constraints      = self.graphics_settings.get('show_constraints', True)
+            self.canvas.show_releases         = self.graphics_settings.get('show_releases', True)
+            self.canvas.load_type_filter      = self.graphics_settings.get('load_type_filter', 'both')
+            self.canvas.visible_load_patterns = self.graphics_settings.get('visible_load_patterns', [])
+            self.update_graphics_settings(self.graphics_settings)
+
+        if hasattr(new_model, 'saved_unit_system'):
+            self.combo_units.blockSignals(True)
+            self.combo_units.setCurrentText(new_model.saved_unit_system)
+            self.combo_units.blockSignals(False)
+            self.on_units_changed(0)
+
+        self.canvas.draw_model(self.model)
+        self.canvas.set_standard_view("3D")
+        self.set_interface_state(True)
+        self.update_window_title()
+        self.status.showMessage(f"Loaded via terminal: {new_model.file_path}")
+
+    def _on_cli_model_saved(self, model):
+        """Called by TerminalPanel when the CLI 'save' command succeeds."""
+        self.undo_stack.setClean()
+        self.update_window_title()
+        self.status.showMessage(f"Saved via terminal: {model.file_path}")
 
 def main():
     if sys.platform == 'win32':

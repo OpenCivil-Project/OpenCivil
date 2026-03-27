@@ -1,0 +1,20 @@
+from setuptools import setup, find_packages
+
+setup(
+    name="opencivil",
+    version="0.7",
+    description="A parametric 3D structural analysis API and GUI",
+    author="Ahmed",
+    packages=find_packages(),
+    install_requires=[
+        "numpy",
+        "scipy",
+        "PyQt6", 
+    ],
+    entry_points={
+        'console_scripts': [
+            'opencivil=core.cli:start_terminal',
+            'opencivil_gui=app.main:main',  
+        ],
+    },
+)
