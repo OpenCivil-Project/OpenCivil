@@ -3,7 +3,7 @@
 ; ====================================================================
 
 #define MyAppName "OpenCivil"
-#define MyAppVersion "0.65 (Stable)"
+#define MyAppVersion "0.70 (Stable)"
 #define MyAppPublisher "OpenCivil"
 #define MyAppExeName "OpenCivil.exe"
 #define MyAppAssocName "Open Civil Model"

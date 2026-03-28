@@ -1117,24 +1117,26 @@ class MainWindow(QMainWindow):
         
         self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
 
-        if len(node_ids) == 1 and not elem_ids:
-                           
-            nid = node_ids[0]
-            n = self.model.nodes[nid]
-            target = QVector3D(n.x, n.y, n.z)
-            self.canvas.camera.animate_to(target_center=target)
-            self.status.showMessage(f"Selected Node {nid} (Camera Focused)")
-            
-        elif len(elem_ids) == 1 and not node_ids:
-                                     
-            eid = elem_ids[0]
-            el = self.model.elements[eid]
-            mid_x = (el.node_i.x + el.node_j.x) / 2
-            mid_y = (el.node_i.y + el.node_j.y) / 2
-            mid_z = (el.node_i.z + el.node_j.z) / 2
-            target = QVector3D(mid_x, mid_y, mid_z)
-            self.canvas.camera.animate_to(target_center=target)
-            self.status.showMessage(f"Selected Frame {eid} (Camera Focused)")
+        modifiers = QApplication.keyboardModifiers()
+        is_focus_requested = (modifiers == Qt.KeyboardModifier.AltModifier)
+
+        if is_focus_requested:
+            if len(node_ids) == 1 and not elem_ids:
+                nid = node_ids[0]
+                n = self.model.nodes[nid]
+                target = QVector3D(n.x, n.y, n.z)
+                self.canvas.camera.animate_to(target_center=target)
+                self.status.showMessage(f"Selected Node {nid} (Camera Focused)")
+                
+            elif len(elem_ids) == 1 and not node_ids:
+                eid = elem_ids[0]
+                el = self.model.elements[eid]
+                mid_x = (el.node_i.x + el.node_j.x) / 2
+                mid_y = (el.node_i.y + el.node_j.y) / 2
+                mid_z = (el.node_i.z + el.node_j.z) / 2
+                target = QVector3D(mid_x, mid_y, mid_z)
+                self.canvas.camera.animate_to(target_center=target)
+                self.status.showMessage(f"Selected Frame {eid} (Camera Focused)")
 
     def delete_current_selection(self):
         if not self.model: return

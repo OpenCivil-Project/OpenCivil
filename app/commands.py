@@ -118,8 +118,13 @@ class CmdDeleteSelection(QUndoCommand):
         
         for nid in self.node_ids_to_del:
             if nid in self.model.nodes:
-                                                                                
                 del self.model.nodes[nid]
+
+        self.model.loads = [
+            load for load in self.model.loads
+            if not (hasattr(load, 'element_id') and load.element_id in self.elem_ids_to_del)
+            and not (hasattr(load, 'node_id') and load.node_id in self.node_ids_to_del)
+        ]
 
         self.main_window.selected_ids = []
         self.main_window.selected_node_ids = []

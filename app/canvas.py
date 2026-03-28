@@ -286,10 +286,27 @@ class MCanvas3D(gl.GLViewWidget):
 
         size = self.display_config.get("node_size", 6)
         color_tuple = self.display_config.get("node_color", (1, 1, 0, 1))
+        
+        can_deflect = (self.view_deflected and 
+                       hasattr(model, 'has_results') and 
+                       model.has_results and 
+                       model.results is not None)
                               
         for nid, n in model.nodes.items():
-            xyz = [n.x, n.y, n.z]
-            v_state = self._get_visibility_state(n.x, n.y, n.z)                
+                                                
+            nx, ny, nz = n.x, n.y, n.z
+            
+            if can_deflect:
+                disp = model.results.get("displacements", {}).get(str(nid))
+                if disp:
+                                                            
+                    nx += disp[0] * self.deflection_scale * self.anim_factor
+                    ny += disp[1] * self.deflection_scale * self.anim_factor
+                    nz += disp[2] * self.deflection_scale * self.anim_factor
+
+            xyz = [nx, ny, nz]
+            
+            v_state = self._get_visibility_state(n.x, n.y, n.z)             
     
             if v_state == 1:             
                 ghost_pos.append(xyz)
@@ -670,13 +687,14 @@ class MCanvas3D(gl.GLViewWidget):
                         p1_draw = p1 + (vx * off_i)
                         p2_draw = p2 - (vx * off_j)
 
-                if eid in self.selected_element_ids:
-                     center_lines.extend([p1, p2]) 
-                     center_colors.extend([color_edge_select, color_edge_select])
-
                 v1, v2, v3 = self._get_consistent_axes(el)
                 path_points.append( (p1_draw, v2, v3) )
                 path_points.append( (p2_draw, v2, v3) )
+
+            if eid in self.selected_element_ids and len(path_points) >= 2:
+                for i in range(len(path_points) - 1):
+                    center_lines.extend([path_points[i][0], path_points[i+1][0]])
+                    center_colors.extend([color_edge_select, color_edge_select])
 
             y_shift, z_shift = el.get_cardinal_offsets()
             off_vec_i = getattr(el, 'joint_offset_i', np.array([0,0,0]))
@@ -1736,8 +1754,9 @@ class MCanvas3D(gl.GLViewWidget):
                 path_points.append((pos_anim, v2_curr, v3_curr))
             
             if eid in self.selected_element_ids and len(path_points) >= 2:
-                center_lines.extend([path_points[0][0], path_points[-1][0]])
-                center_colors.extend([color_edge_select, color_edge_select])
+                for i in range(len(path_points) - 1):
+                    center_lines.extend([path_points[i][0], path_points[i+1][0]])
+                    center_colors.extend([color_edge_select, color_edge_select])
             
             y_shift, z_shift = el.get_cardinal_offsets()
             off_vec_i = getattr(el, 'joint_offset_i', np.array([0, 0, 0]))
@@ -1808,6 +1827,9 @@ class MCanvas3D(gl.GLViewWidget):
         """
                                            
         frame = self.prerendered_geometry_frames[frame_idx]
+
+        for node_item in self.node_items:
+            node_item.setVisible(False)
         
         for item in self.element_items:
             try:
@@ -2132,11 +2154,27 @@ class MCanvas3D(gl.GLViewWidget):
         found_nodes = []
         found_elems = []
 
+        can_deflect = (self.view_deflected and 
+                       hasattr(self.current_model, 'has_results') and 
+                       self.current_model.has_results and 
+                       self.current_model.results is not None)
+
         node_screens = {}
         for nid, node in self.current_model.nodes.items():
+                                                                
             if self._get_visibility_state(node.x, node.y, node.z) != 2: 
                 continue
-            s_pos = self._project_to_screen(node.x, node.y, node.z, mvp, w, h)
+            
+            nx, ny, nz = node.x, node.y, node.z
+            
+            if can_deflect:
+                disp = self.current_model.results.get("displacements", {}).get(str(nid))
+                if disp:
+                    nx += disp[0] * self.deflection_scale * self.anim_factor
+                    ny += disp[1] * self.deflection_scale * self.anim_factor
+                    nz += disp[2] * self.deflection_scale * self.anim_factor
+
+            s_pos = self._project_to_screen(nx, ny, nz, mvp, w, h)
             if s_pos:
                 node_screens[nid] = s_pos
                 sx, sy = s_pos
@@ -2870,10 +2908,25 @@ class MCanvas3D(gl.GLViewWidget):
         hovered_elem = None
         min_dist = 15.0
 
+        can_deflect = (self.view_deflected and 
+                       hasattr(self.current_model, 'has_results') and 
+                       self.current_model.has_results and 
+                       self.current_model.results is not None)
+
         node_screens = {}
         for nid, node in self.current_model.nodes.items():
             if self._get_visibility_state(node.x, node.y, node.z) != 2: continue
-            s_pos = self._project_to_screen(node.x, node.y, node.z, mvp, w, h)
+            
+            nx, ny, nz = node.x, node.y, node.z
+            
+            if can_deflect:
+                disp = self.current_model.results.get("displacements", {}).get(str(nid))
+                if disp:
+                    nx += disp[0] * self.deflection_scale * self.anim_factor
+                    ny += disp[1] * self.deflection_scale * self.anim_factor
+                    nz += disp[2] * self.deflection_scale * self.anim_factor
+
+            s_pos = self._project_to_screen(nx, ny, nz, mvp, w, h)
             if s_pos:
                 node_screens[nid] = s_pos
                 dist = ((s_pos[0] - px)**2 + (s_pos[1] - py)**2)**0.5
@@ -2884,20 +2937,61 @@ class MCanvas3D(gl.GLViewWidget):
         if hovered_node is None:
             min_dist_edge = 10.0
             for eid, el in self.current_model.elements.items():
-                if el.node_i.id in node_screens and el.node_j.id in node_screens:
-                    x1, y1 = node_screens[el.node_i.id]
-                    x2, y2 = node_screens[el.node_j.id]
-                    l2 = (x2 - x1)**2 + (y2 - y1)**2
-                    if l2 == 0:
-                        dist = ((px - x1)**2 + (py - y1)**2)**0.5
-                    else:
-                        t = max(0, min(1, ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2))
-                        proj_x = x1 + t * (x2 - x1)
-                        proj_y = y1 + t * (y2 - y1)
-                        dist = ((px - proj_x)**2 + (py - proj_y)**2)**0.5
-                    if dist < min_dist_edge:
-                        min_dist_edge = dist
-                        hovered_elem = eid
+
+                use_curve = False
+                if can_deflect and eid in self.deflection_cache:
+                    cached = self.deflection_cache[eid]
+                    curve_data_full = cached['curve_data']
+                    p1_orig = cached['p1_orig']
+                    p2_orig = cached['p2_orig']
+                    
+                    screen_pts = []
+                    for k in range(len(curve_data_full)):
+                        pos_full, _, _ = curve_data_full[k]
+                        s = k / (len(curve_data_full) - 1) if len(curve_data_full) > 1 else 0.0
+                        pos_orig = p1_orig + s * (p2_orig - p1_orig)
+                        
+                        displacement = pos_full - pos_orig
+                                                                                          
+                        pos_anim = pos_orig + displacement * self.anim_factor
+                        
+                        s_pos = self._project_to_screen(pos_anim[0], pos_anim[1], pos_anim[2], mvp, w, h)
+                        if s_pos:
+                            screen_pts.append(s_pos)
+                            
+                    if len(screen_pts) >= 2:
+                        use_curve = True
+                        for i in range(len(screen_pts) - 1):
+                            x1, y1 = screen_pts[i]
+                            x2, y2 = screen_pts[i+1]
+                            l2 = (x2 - x1)**2 + (y2 - y1)**2
+                            if l2 == 0:
+                                dist = ((px - x1)**2 + (py - y1)**2)**0.5
+                            else:
+                                t = max(0, min(1, ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2))
+                                proj_x = x1 + t * (x2 - x1)
+                                proj_y = y1 + t * (y2 - y1)
+                                dist = ((px - proj_x)**2 + (py - proj_y)**2)**0.5
+                                
+                            if dist < min_dist_edge:
+                                min_dist_edge = dist
+                                hovered_elem = eid
+                                                                                 
+                if not use_curve:
+                    if el.node_i.id in node_screens and el.node_j.id in node_screens:
+                        x1, y1 = node_screens[el.node_i.id]
+                        x2, y2 = node_screens[el.node_j.id]
+                        l2 = (x2 - x1)**2 + (y2 - y1)**2
+                        if l2 == 0:
+                            dist = ((px - x1)**2 + (py - y1)**2)**0.5
+                        else:
+                            t = max(0, min(1, ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2))
+                            proj_x = x1 + t * (x2 - x1)
+                            proj_y = y1 + t * (y2 - y1)
+                            dist = ((px - proj_x)**2 + (py - proj_y)**2)**0.5
+                        if dist < min_dist_edge:
+                            min_dist_edge = dist
+                            hovered_elem = eid
 
         text = ""
         in_analysis = getattr(self.current_model, 'has_results', False)
