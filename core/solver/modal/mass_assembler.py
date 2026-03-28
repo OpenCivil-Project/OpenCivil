@@ -40,15 +40,16 @@ class GlobalMassAssembler:
                 elif isinstance(sources, dict): return list(sources.values())[0]
         return None
 
-    def _add_element_self_mass(self):
-        print("   -> Adding Element Self-Mass (Lumped)...")
+    def _add_element_self_mass(self, scale_factor=1.0):
+        print(f"   -> Adding Element Self-Mass (Lumped, Scale={scale_factor:.2f})...")
         for el in self.dm.elements:
             A = el['section']['A']
             rho = el['material']['rho'] 
             L = el['L_total']
             g = 9.80665
             mass_density = rho / g
-            total_mass = A * mass_density * L
+                                          
+            total_mass = A * mass_density * L * scale_factor 
             
             for n_idx in el['node_indices']:
                 start_dof = n_idx * 6
@@ -72,6 +73,21 @@ class GlobalMassAssembler:
 
         if not active_patterns: return
 
+        raw_patterns = self.dm.raw.get("load_patterns", []) 
+        
+        for pat_name, multiplier in active_patterns.items():
+            sw_mult = 0.0
+            
+            for rp in raw_patterns:
+                if rp.get("name") == pat_name:
+                    sw_mult = rp.get("sw_mult", 0.0) 
+                    break
+            
+            total_sw_factor = multiplier * sw_mult
+            if total_sw_factor > 1e-6:
+                print(f"   -> Load Pattern '{pat_name}' has self-weight ({sw_mult}). Adding to mass matrix...")
+                self._add_element_self_mass(scale_factor=total_sw_factor)
+                
         for load in self.dm.raw.get("loads", []):
             pat = load["pattern"]
             if pat not in active_patterns: continue

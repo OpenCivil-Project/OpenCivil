@@ -4,7 +4,7 @@ setup(
     name="opencivil",
     version="0.7",
     description="A parametric 3D structural analysis API and GUI",
-    author="Ahmed",
+    author="Shaikh Ahmed Azad",
     packages=find_packages(),
     install_requires=[
         "numpy",

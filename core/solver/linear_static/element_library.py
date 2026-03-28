@@ -131,3 +131,61 @@ def get_eccentricity_matrix(off_i, off_j):
     Te[0:6, 0:6] = apply_offset(0, off_i)
     Te[6:12, 6:12] = apply_offset(1, off_j)
     return Te
+
+def get_geometric_stiffness_matrix(P_axial, L):
+    """
+    Calculates the 12x12 Geometric Stiffness Matrix (K_g) for a 3D Frame Element.
+    P_axial: Axial force in the element. 
+             (Standard convention: Positive = Tension, Negative = Compression)
+    L: Clear Length of the element
+    """
+    kg = np.zeros((12, 12))
+    
+    if L <= 1e-9:
+        return kg
+
+    P_c = -P_axial 
+
+    c = P_c / (30 * L)
+
+    kg[2, 2] = 36 * c
+    kg[2, 4] = -3 * L * c
+    kg[2, 8] = -36 * c
+    kg[2, 10] = -3 * L * c
+
+    kg[4, 2] = -3 * L * c
+    kg[4, 4] = 4 * L**2 * c
+    kg[4, 8] = 3 * L * c
+    kg[4, 10] = -L**2 * c
+
+    kg[8, 2] = -36 * c
+    kg[8, 4] = 3 * L * c
+    kg[8, 8] = 36 * c
+    kg[8, 10] = 3 * L * c
+
+    kg[10, 2] = -3 * L * c
+    kg[10, 4] = -L**2 * c
+    kg[10, 8] = 3 * L * c
+    kg[10, 10] = 4 * L**2 * c
+
+    kg[1, 1] = 36 * c
+    kg[1, 5] = 3 * L * c
+    kg[1, 7] = -36 * c
+    kg[1, 11] = 3 * L * c
+
+    kg[5, 1] = 3 * L * c
+    kg[5, 5] = 4 * L**2 * c
+    kg[5, 7] = -3 * L * c
+    kg[5, 11] = -L**2 * c
+
+    kg[7, 1] = -36 * c
+    kg[7, 5] = -3 * L * c
+    kg[7, 7] = 36 * c
+    kg[7, 11] = -3 * L * c
+
+    kg[11, 1] = 3 * L * c
+    kg[11, 5] = -L**2 * c
+    kg[11, 7] = -3 * L * c
+    kg[11, 11] = 4 * L**2 * c
+
+    return kg

@@ -31,11 +31,6 @@ class SolverWorker(QThread):
             
             if self.case_type == "Modal":
                 success = run_modal_analysis(self.input_path, self.output_path)
-                if success:
-                    import shutil
-                    modal_copy = self.output_path.replace("_results.json", "_MODAL_results.json")
-                    shutil.copy2(self.output_path, modal_copy)
-                    print(f"Worker: Modal results also saved to {modal_copy}")
 
             elif self.case_type == "Response Spectrum":
                                

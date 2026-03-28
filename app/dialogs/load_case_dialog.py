@@ -53,7 +53,7 @@ class LoadCaseDetailDialog(QDialog):
         h_top.addWidget(QLabel("Load Case Type:"))
         self.combo_type = QComboBox()
                                       
-        self.combo_type.addItems(["Linear Static", "Modal", "Response Spectrum", "LTHA"])
+        self.combo_type.addItems(["Linear Static", "Modal", "Response Spectrum", "LTHA", "Buckling"])
         self.combo_type.setCurrentText(self.case.case_type)
         self.combo_type.currentTextChanged.connect(self.on_type_changed)
         h_top.addWidget(self.combo_type)
@@ -191,6 +191,41 @@ class LoadCaseDetailDialog(QDialog):
         layout_rsa.addWidget(grp_rsa_loads)
         layout.addWidget(self.group_rsa)
 
+        self.group_buckling = QGroupBox("Buckling Parameters")
+        v_buck = QVBoxLayout(self.group_buckling)
+        
+        h_buck_modes = QHBoxLayout()
+        h_buck_modes.addWidget(QLabel("Number of Buckling Modes:"))
+        self.spin_buck_modes = QSpinBox()
+        self.spin_buck_modes.setRange(1, 999)
+        self.spin_buck_modes.setValue(getattr(self.case, 'num_modes', 6))
+        h_buck_modes.addWidget(self.spin_buck_modes)
+        h_buck_modes.addStretch()
+        v_buck.addLayout(h_buck_modes)
+
+        h_buck_tol = QHBoxLayout()
+        h_buck_tol.addWidget(QLabel("Eigenvalue Convergence Tolerance:"))
+        tol_val = getattr(self.case, 'eigen_tol', 1e-9)
+        self.input_buck_tol = QLineEdit(f"{tol_val:.3E}")
+        self.input_buck_tol.setFixedWidth(100)
+        h_buck_tol.addWidget(self.input_buck_tol)
+        h_buck_tol.addStretch()
+        v_buck.addLayout(h_buck_tol)
+
+        h_buck_mass = QHBoxLayout()
+        h_buck_mass.addWidget(QLabel("Mass Source:"))
+        self.combo_buck_mass = QComboBox()
+        if hasattr(self.model, 'mass_sources') and self.model.mass_sources:
+            self.combo_buck_mass.addItems(self.model.mass_sources.keys())
+        else:
+            self.combo_buck_mass.addItem("MSSSRC1")
+        self.combo_buck_mass.setCurrentText(getattr(self.case, 'mass_source', 'MSSSRC1'))
+        h_buck_mass.addWidget(self.combo_buck_mass)
+        h_buck_mass.addStretch()
+        v_buck.addLayout(h_buck_mass)
+
+        layout.addWidget(self.group_buckling)
+
         self.group_ltha = QGroupBox("Linear Time History Parameters")
         v_ltha = QVBoxLayout(self.group_ltha)
 
@@ -274,21 +309,24 @@ class LoadCaseDetailDialog(QDialog):
 
     def on_type_changed(self, text):
         """Show/Hide UI elements based on case type"""
-        is_modal = (text == "Modal")
-        is_nonlinear = (text == "Nonlinear Static")
-        is_rsa = (text == "Response Spectrum")
-        is_ltha = (text == "LTHA")
-        
+        is_modal      = (text == "Modal")
+        is_nonlinear  = (text == "Nonlinear Static")
+        is_rsa        = (text == "Response Spectrum")
+        is_ltha       = (text == "LTHA")
+        is_buckling   = (text == "Buckling")
+
         self.group_loads.setVisible(not is_modal and not is_rsa and not is_ltha)
         self.group_modal.setVisible(is_modal)
         self.group_rsa.setVisible(is_rsa)
         self.group_ltha.setVisible(is_ltha)
-        
+        self.group_buckling.setVisible(is_buckling)                      
+        self.grp_stiffness.setVisible(True)                            
+
         self.group_settings.setVisible(is_nonlinear or is_rsa)
-        
-        self.chk_pdelta.setVisible(is_nonlinear)     
-        self.lbl_damp.setVisible(is_rsa)            
-        self.input_damping.setVisible(is_rsa)       
+
+        self.chk_pdelta.setVisible(is_nonlinear)
+        self.lbl_damp.setVisible(is_rsa)
+        self.input_damping.setVisible(is_rsa)
 
         self.setWindowTitle("Load Case Data - " + text)
 
@@ -454,6 +492,25 @@ class LoadCaseDetailDialog(QDialog):
                         scale
                     ))
         
+        elif c.case_type == "Buckling":
+            c.num_modes = self.spin_buck_modes.value()
+            try:
+                c.eigen_tol = float(self.input_buck_tol.text())
+            except ValueError:
+                c.eigen_tol = 1e-9
+            c.mass_source = self.combo_buck_mass.currentText()
+            
+            c.loads = []
+            for r in range(self.table.rowCount()):
+                cmb = self.table.cellWidget(r, 0)
+                if not cmb: continue
+                pattern = cmb.currentText()
+                try:
+                    scale = float(self.table.item(r, 1).text())
+                except:
+                    scale = 1.0
+                c.loads.append((pattern, scale))
+
         else:
             rows = self.table.rowCount()
             for r in range(rows):
@@ -648,7 +705,8 @@ class LoadCaseManagerDialog(QDialog):
         
         if old_name in self.model.load_cases:
             original_case = self.model.load_cases[old_name]
-            
+
+            c_type = original_case.case_type if hasattr(original_case, 'case_type') else original_case.get('type', '')
             dlg = LoadCaseDetailDialog(self.model, original_case, self, is_new=False)
             if dlg.exec():
                 new_case = dlg.get_data()

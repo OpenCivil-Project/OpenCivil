@@ -6,12 +6,76 @@ from PyQt6.QtCore import Qt
 
 from core.units import unit_registry 
 
-class ModalResultsDialog(QDialog):
+class AnalysisResultsDialog(QDialog):
     def __init__(self, results_data, parent=None):
         super().__init__(parent)
         self.results = results_data
         self.setWindowTitle("Analysis Results")
-        self.resize(1100, 600)                              
+        self.resize(1100, 600)
+        
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #f8f9fa;
+            }
+            QTabWidget::pane {
+                border: 1px solid #d0d0d0;
+                background: #ffffff;
+                border-radius: 6px;
+            }
+            QTabBar::tab {
+                background: #e9ecef;
+                color: #495057;
+                padding: 8px 20px;
+                border: 1px solid #d0d0d0;
+                border-bottom: none;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+                margin-right: 2px;
+                font-size: 10pt;
+                font-family: 'Segoe UI', sans-serif;
+            }
+            QTabBar::tab:selected {
+                background: #0078D7;
+                color: white;
+                font-weight: bold;
+                border-color: #0078D7;
+            }
+            QTabBar::tab:hover:!selected {
+                background: #dee2e6;
+            }
+            QTableWidget {
+                border: none;
+                gridline-color: #e9ecef;
+                selection-background-color: #cce4f7;
+                selection-color: #000000;
+                font-family: 'Segoe UI', sans-serif;
+                font-size: 10pt;
+            }
+            QHeaderView::section {
+                background-color: #f1f3f5;
+                color: #212529;
+                font-weight: bold;
+                padding: 6px;
+                border: none;
+                border-right: 1px solid #dee2e6;
+                border-bottom: 2px solid #ced4da;
+            }
+            QPushButton {
+                background-color: #0078D7;
+                color: white;
+                border: none;
+                padding: 8px 24px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 10pt;
+            }
+            QPushButton:hover {
+                background-color: #005a9e;
+            }
+            QPushButton:pressed {
+                background-color: #004578;
+            }
+        """)
         
         sf = unit_registry.force_scale
         sl = unit_registry.length_scale
@@ -130,6 +194,59 @@ class ModalResultsDialog(QDialog):
                  "Rx", "SumRx", "Ry", "SumRy", "Rz", "SumRz"]
             )
             self.tabs.addTab(self.tab_ratios, "Mass Participation")
+
+        if "tables" in self.results and "buckling_factors" in self.results["tables"]:
+            buckling_data = self.results["tables"]["buckling_factors"]
+            
+            self.tab_buckling_factors = self.create_table(
+                ["Mode", "Critical Load Factor (λ)"],
+                buckling_data,
+                ["mode", "lambda"]
+            )
+            self.tabs.addTab(self.tab_buckling_factors, "Buckling Factors")
+
+        if "mode_shapes" in self.results and "tables" in self.results and "buckling_factors" in self.results["tables"]:
+            factors = self.results["tables"]["buckling_factors"]
+            lam_map = {f["mode"]: f.get("lambda", 0.0) for f in factors}
+            
+            shape_summary_data = []
+            for mode_key, node_data in self.results["mode_shapes"].items():
+                try:
+                    mode_num = int(mode_key.replace("Mode ", "").strip())
+                except ValueError:
+                    continue
+
+                max_u1 = max_u2 = max_u3 = 0.0
+                for dofs in node_data.values():
+                    if len(dofs) >= 3:
+                        max_u1 = max(max_u1, abs(dofs[0]))
+                        max_u2 = max(max_u2, abs(dofs[1]))
+                        max_u3 = max(max_u3, abs(dofs[2]))
+
+                dom = max(zip([max_u1, max_u2, max_u3], ["U1", "U2", "U3"]), key=lambda x: x[0])[1]
+                
+                shape_summary_data.append({
+                    "mode": mode_num,
+                    "lam": lam_map.get(mode_num, 0.0),
+                    "u1": max_u1,
+                    "u2": max_u2,
+                    "u3": max_u3,
+                    "dom": dom
+                })
+            
+            shape_summary_data.sort(key=lambda x: x["mode"])
+            
+            self.tab_buckling_shapes = self.create_table(
+                ["Mode", "λ", "Max |U1|", "Max |U2|", "Max |U3|", "Dominant DOF"],
+                shape_summary_data,
+                ["mode", "lam", "u1", "u2", "u3", "dom"]
+            )
+            self.tabs.addTab(self.tab_buckling_shapes, "Mode Shape Summary")
+            
+        if "error" in self.results:
+            err_data = [{"field": k, "value": str(v)} for k, v in self.results["error"].items()]
+            self.tab_error = self.create_table(["Field", "Value"], err_data, ["field", "value"])
+            self.tabs.addTab(self.tab_error, "⚠ Error Details")
 
         h_btns = QHBoxLayout()
         h_btns.addStretch()

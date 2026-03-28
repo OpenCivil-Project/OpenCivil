@@ -2,7 +2,7 @@ import sys
 import os
 import ctypes
 import time
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
 from PyQt6.QtGui import QAction, QPixmap,QCursor, QVector3D, QColor, QIcon
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, 
                              QMessageBox, QFileDialog, QSplashScreen, QLabel, 
@@ -15,6 +15,8 @@ from PyQt6.QtCore import QUrl
 from PyQt6.QtMultimediaWidgets import QVideoWidget  
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtCore import QUrl, pyqtSignal
+import qtawesome as qta
+from PyQt6.QtGui import QAction, QPixmap, QCursor, QVector3D, QColor, QIcon, QPainter, QFont
 
 if getattr(sys, 'frozen', False):
 
@@ -54,7 +56,7 @@ from app.solver_worker import SolverWorker
 from app.dialogs.spy_dialogs import MatrixSpyDialog, FBDViewerDialog
 from app.dialogs.deformed_shape_dialog import DeformedShapeDialog
 from app.dialogs.mass_source_dialog import MassSourceManagerDialog
-from app.dialogs.modal_results_dialog import ModalResultsDialog
+from app.dialogs.analysis_results_dialog import AnalysisResultsDialog
 from app.auth import GoogleAuthManager, UserProfileWidget
 from app.dialogs.time_history_manager import TimeHistoryManagerDialog
 from app.dialogs.solid_analysis_dialog import SolidAnalysisDialog
@@ -165,7 +167,7 @@ class MainWindow(QMainWindow):
             "node_color": (1.0, 1.0, 0.0, 1.0),       
             "line_width": 2.0,
             "extrude_opacity": 0.35,
-            "show_edges": False,
+            "show_edges": True,
             "msaa_level": 2,
             "edge_width": 1.5,
             "edge_color": (0.0, 0.0, 0.0, 1.0),      
@@ -213,21 +215,32 @@ class MainWindow(QMainWindow):
     
     def init_ui(self):
         """Organizes all UI components"""
+
+        def create_plane_icon(text):
+            pixmap = QPixmap(32, 32)
+            pixmap.fill(QColor(0, 0, 0, 0)) 
+            painter = QPainter(pixmap)
+            painter.setPen(QColor('#6c757d')) 
+            painter.setFont(QFont('Segoe UI', 15, QFont.Weight.Bold))
+            painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, text)
+            painter.end()
+            return QIcon(pixmap)
+        
         menubar = self.menuBar()
 
         file_menu = menubar.addMenu("File")
         
-        new_action = QAction("New Model...", self)
+        new_action = QAction(qta.icon('fa5s.file-medical', color='#6c757d'), "New Model...", self)
         new_action.setShortcut("Ctrl+N")
         new_action.triggered.connect(self.on_new_model)
         file_menu.addAction(new_action)
         
-        open_action = QAction("Open...", self)
+        open_action = QAction(qta.icon('fa5s.folder-open', color='#6c757d'), "Open...", self)
         open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(self.on_open_model)
         file_menu.addAction(open_action)
 
-        self.action_save = QAction("Save As...", self)
+        self.action_save = QAction(qta.icon('fa5s.save', color='#6c757d'), "Save As...", self)
         self.action_save.setShortcut("Ctrl+S")
         self.action_save.triggered.connect(self.on_save_model)
         file_menu.addAction(self.action_save)
@@ -236,120 +249,247 @@ class MainWindow(QMainWindow):
 
         self.menu_edit = menubar.addMenu("Edit")
 
-        undo_action = self.undo_stack.createUndoAction(self, "Undo")
-        undo_action.setShortcut("Ctrl+Z")
-        self.menu_edit.addAction(undo_action)
+        self.undo_action = self.undo_stack.createUndoAction(self, "Undo")
+        self.undo_action.setIcon(qta.icon('fa5s.undo', color='#6c757d', disabled_color='#cccccc'))
+        self.undo_action.setShortcut("Ctrl+Z")
+        self.undo_action.setToolTip("Undo (Ctrl+Z)")
+        self.menu_edit.addAction(self.undo_action)
 
-        redo_action = self.undo_stack.createRedoAction(self, "Redo")
-        redo_action.setShortcut("Ctrl+Y")                                          
-        self.menu_edit.addAction(redo_action)
+        self.redo_action = self.undo_stack.createRedoAction(self, "Redo")
+        self.redo_action.setIcon(qta.icon('fa5s.redo', color='#6c757d', disabled_color='#cccccc'))
+        self.redo_action.setShortcut("Ctrl+Y")                                          
+        self.redo_action.setToolTip("Redo (Ctrl+Y)")
+        self.menu_edit.addAction(self.redo_action)
         
         self.menu_edit.addSeparator()
 
-        rep_action = QAction("Replicate...", self)
+        rep_action = QAction(qta.icon('fa5s.copy', color='#6c757d'), "Replicate...", self)
         rep_action.setShortcut("Ctrl+R") 
         rep_action.triggered.connect(self.on_edit_replicate)
         self.menu_edit.addAction(rep_action)
 
-        merge_action = QAction("Merge Joints...", self)
+        merge_action = QAction(qta.icon('fa5s.compress-arrows-alt', color='#6c757d'), "Merge Joints...", self)
         merge_action.triggered.connect(self.on_edit_merge)
         self.menu_edit.addAction(merge_action)
 
         self.menu_define = menubar.addMenu("Define")
-        mat_action = QAction("Material Properties...", self)
+        
+        grid_action = QAction(qta.icon('fa5s.th', color='#6c757d'), "Grid System...", self)
+        grid_action.triggered.connect(self.open_grid_editor)
+        self.menu_define.addAction(grid_action)
+        self.menu_define.addSeparator()
+
+        mat_action = QAction(qta.icon('fa5s.cubes', color='#6c757d'), "Material Properties...", self)
         mat_action.triggered.connect(self.on_define_materials)
         self.menu_define.addAction(mat_action)
         
-        sec_action = QAction("Section Properties...", self)
+        sec_action = QAction(qta.icon('fa5s.shapes', color='#6c757d'), "Section Properties...", self)
         sec_action.triggered.connect(self.on_define_sections) 
         self.menu_define.addAction(sec_action)
 
-        mass_action = QAction("Mass Source...", self)
+        mass_action = QAction(qta.icon('fa5s.weight-hanging', color='#6c757d'), "Mass Source...", self)
         mass_action.triggered.connect(self.on_define_mass_source)
         self.menu_define.addAction(mass_action)
 
-        load_pat_action = QAction("Load Patterns...", self)
+        load_pat_action = QAction(qta.icon('fa5s.list-ul', color='#6c757d'), "Load Patterns...", self)
         load_pat_action.triggered.connect(self.on_define_load_patterns)
         self.menu_define.addAction(load_pat_action)
 
-        load_case_action = QAction("Load Cases...", self)
+        load_case_action = QAction(qta.icon('fa5s.tasks', color='#6c757d'), "Load Cases...", self)
         load_case_action.triggered.connect(self.on_define_load_cases)
         self.menu_define.addAction(load_case_action)
 
         self.menu_functions = self.menu_define.addMenu("Functions")
+                                                              
+        self.menu_functions.setIcon(qta.icon('fa5s.chart-line', color='#6c757d'))
         
-        rsa_action = QAction("Response Spectrum...", self)
+        rsa_action = QAction(qta.icon('fa5s.wave-square', color='#6c757d'), "Response Spectrum...", self)
         rsa_action.triggered.connect(self.on_define_response_spectrum)
         self.menu_functions.addAction(rsa_action)
 
-        th_action = QAction("Time History...", self)
+        th_action = QAction(qta.icon('fa5s.history', color='#6c757d'), "Time History...", self)
         th_action.triggered.connect(self.on_define_time_history_functions)
         self.menu_functions.addAction(th_action)
         
         self.menu_define.addSeparator()
         
         self.menu_draw = menubar.addMenu("Draw")
-        draw_action = QAction("Draw Frame/Cable...", self)
+        
+        draw_action = QAction(qta.icon('fa5s.pencil-ruler', color='#6c757d'), "Draw Frame/Cable...", self)
         draw_action.triggered.connect(self.on_draw_frame)
         self.menu_draw.addAction(draw_action)
         
-        draw_slab_action = QAction("Create Slab from Selection", self)
+        draw_slab_action = QAction(qta.icon('fa5s.draw-polygon', color='#6c757d'), "Create Slab from Selection", self)
         draw_slab_action.triggered.connect(self.on_create_slab_from_selection)
         self.menu_draw.addAction(draw_slab_action)
 
         self.toolbar = self.addToolBar("Views")
-        
-        btn_iso = QAction("🕶️ ISO", self)
+        self.toolbar.setMovable(False)
+        self.toolbar.setIconSize(QSize(20, 20))
+
+        self.toolbar = self.addToolBar("Views")
+        self.toolbar.setMovable(False)
+        self.toolbar.setIconSize(QSize(20, 20))
+
+        self.toolbar.setStyleSheet("""
+            QToolButton {
+                border: 1px solid transparent;
+                border-radius: 4px;
+                padding: 3px;
+            }
+            QToolButton:hover {
+                background-color: #e9ecef; /* Soft grey on hover */
+            }
+            QToolButton:checked {
+                background-color: #d6e4f0; /* Professional light blue when toggled ON */
+                border: 1px solid #b3cce6;
+            }
+            QToolButton:pressed {
+                background-color: #ced4da;
+            }
+        """)
+
+        act_new = QAction(qta.icon('fa5s.file-medical', color='#6c757d'), "New Model", self)
+        act_new.setToolTip("New Model  (Ctrl+N)")
+        act_new.triggered.connect(self.on_new_model)
+        self.toolbar.addAction(act_new)
+
+        act_open = QAction(qta.icon('fa5s.folder-open', color='#6c757d'), "Open", self)
+        act_open.setToolTip("Open Model  (Ctrl+O)")
+        act_open.triggered.connect(self.on_open_model)
+        self.toolbar.addAction(act_open)
+
+        act_save = QAction(qta.icon('fa5s.save', color='#6c757d'), "Save", self)
+        act_save.setToolTip("Save Model  (Ctrl+S)")
+        act_save.triggered.connect(self.on_save_model)
+        self.toolbar.addAction(act_save)
+
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+
+        tb_undo = QAction(qta.icon('fa5s.undo', color='#6c757d'), "Undo", self)
+        tb_undo.setToolTip("Undo  (Ctrl+Z)")
+        self.toolbar.addAction(self.undo_action)
+
+        tb_redo = QAction(qta.icon('fa5s.redo', color='#6c757d'), "Redo", self)
+        tb_redo.setToolTip("Redo  (Ctrl+Y)")
+        self.toolbar.addAction(self.redo_action)
+
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+
+        act_grid = QAction(qta.icon('fa5s.th', color='#6c757d'), "Grid System", self)
+        act_grid.setToolTip("Edit Grid System")
+        act_grid.triggered.connect(self.open_grid_editor)
+        self.toolbar.addAction(act_grid)
+
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+
+        act_zoom_in =  QAction(qta.icon('fa5s.search-plus', color='#6c757d'), "Zoom In", self)
+        act_zoom_in.setToolTip("Zoom In")
+        act_zoom_in.triggered.connect(self._toolbar_zoom_in)
+        self.toolbar.addAction(act_zoom_in)
+
+        act_zoom_out = QAction(qta.icon('fa5s.search-minus', color='#6c757d'), "Zoom Out", self)
+        act_zoom_out.setToolTip("Zoom Out")
+        act_zoom_out.triggered.connect(self._toolbar_zoom_out)
+        self.toolbar.addAction(act_zoom_out)
+
+        self.btn_pan = QAction(qta.icon('fa5s.hand-paper', color='#6c757d'), "Pan Tool", self)
+        self.btn_pan.setToolTip("Pan View (Auto-reverts to mouse after dragging)")
+        self.btn_pan.setCheckable(True)
+        self.btn_pan.triggered.connect(self._toggle_pan)
+        self.toolbar.addAction(self.btn_pan)
+
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+
+        btn_iso = QAction(create_plane_icon("ISO"), "ISO View", self)
         btn_iso.triggered.connect(self.set_view_iso) 
         self.toolbar.addAction(btn_iso)
 
         self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
 
-        btn_3d = QAction("3D", self)
+        btn_3d = QAction(qta.icon('fa5s.dice-d20', color='#6c757d'), "3D", self)
         btn_3d.triggered.connect(self.set_view_3d)
         self.toolbar.addAction(btn_3d)
         
         self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
 
-        btn_xy = QAction("XY", self)
+        btn_xy = QAction(create_plane_icon("XY"), "XY Plan", self)
         btn_xy.triggered.connect(lambda: self.set_view_2d("XY"))
         self.toolbar.addAction(btn_xy)
 
-        btn_xz = QAction("XZ", self)
+        btn_xz = QAction(create_plane_icon("XZ"), "XZ Elev", self)
         btn_xz.triggered.connect(lambda: self.set_view_2d("XZ"))
         self.toolbar.addAction(btn_xz)
         
-        btn_yz = QAction("YZ", self)
+        btn_yz = QAction(create_plane_icon("YZ"), "YZ Elev", self)
         btn_yz.triggered.connect(lambda: self.set_view_2d("YZ"))
         self.toolbar.addAction(btn_yz)
 
         self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
 
-        self.btn_up = QAction("▲ Up", self)
+        self.btn_up = QAction(qta.icon('fa5s.chevron-up', color='#6c757d'), "UP", self)
         self.btn_up.triggered.connect(lambda: self.move_view_layer(1))
         self.toolbar.addAction(self.btn_up)
         
-        self.btn_down = QAction("▼ Down", self)
+        self.btn_down = QAction(qta.icon('fa5s.chevron-down', color='#6c757d'), "Down", self)
         self.btn_down.triggered.connect(lambda: self.move_view_layer(-1))
         self.toolbar.addAction(self.btn_down)
 
         self.toolbar.addSeparator()
-        self.btn_lock = QAction("🔓", self)
-        self.btn_lock.setToolTip("Click to Unlock Model and Discard Results")
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+
+        self.run_action = QAction(qta.icon('fa5s.play', color="#60916A"), "Run Analysis...", self)
+        self.run_action.setToolTip("Run Analysis Setup (F5)")
+        self.run_action.setShortcut("F5") 
+        self.run_action.triggered.connect(self.on_run_analysis_dialog)
+        self.toolbar.addAction(self.run_action)
+
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+
+        self.btn_lock = QAction(qta.icon('fa5s.unlock', color='#6c757d'), "", self)
+        self.btn_lock.setToolTip("Model is editable.")
         self.btn_lock.triggered.connect(self.on_lock_clicked)
         self.toolbar.addAction(self.btn_lock)
 
         self.toolbar.addSeparator()
-
-        self.btn_deform = QAction("Deformed Shape", self)
-        self.btn_deform.setToolTip("Show/Hide Deformed Shape (Results Mode Only)")
-        self.btn_deform.triggered.connect(self.on_view_deformed_shape)
-                                                
-        self.btn_deform.setEnabled(False) 
-                                                
+        self.toolbar.addSeparator()
         self.toolbar.addSeparator()
 
-        self.btn_opts = QAction("Display", self) 
+        self.btn_deform = QAction(qta.icon('fa5s.wave-square', color='#6c757d', disabled_color="#ffffff"), "Deformed Shape", self)
+        self.btn_deform.setCheckable(True)                                 
+        self.btn_deform.setToolTip("Toggle Deformed Shape ON/OFF (Results Mode Only)")
+        self.btn_deform.triggered.connect(self._toolbar_toggle_deform)
+        self.btn_deform.setEnabled(False)
+        self.toolbar.addAction(self.btn_deform)
+
+        self.btn_play_anim = QAction(qta.icon('fa5s.film', color='#6c757d', disabled_color='#cccccc'), "Play Animation", self)
+        self.btn_play_anim.setToolTip("Play / Pause Animation (Results Mode Only)")
+        self.btn_play_anim.triggered.connect(self._toolbar_toggle_animation)
+        self.btn_play_anim.setEnabled(False)
+        self.toolbar.addAction(self.btn_play_anim)
+
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+
+        self.btn_opts = QAction(qta.icon('fa5s.cog', color='#6c757d'), "Display", self)
         self.btn_opts.setShortcut("Ctrl+W")
         self.btn_opts.triggered.connect(self.on_view_options)
         self.toolbar.addAction(self.btn_opts)
@@ -358,7 +498,7 @@ class MainWindow(QMainWindow):
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.toolbar.addWidget(spacer)
 
-        self.btn_cli = QAction(">_", self)
+        self.btn_cli = QAction(qta.icon('fa5s.terminal', color="#6c757d"), "Terminal", self)
         self.btn_cli.setToolTip("Toggle Terminal  (Ctrl+`)")
         self.btn_cli.setShortcut("Ctrl+`")
         self.btn_cli.triggered.connect(self._toggle_terminal)
@@ -392,67 +532,71 @@ class MainWindow(QMainWindow):
         self.menu_assign = menubar.addMenu("Assign")
         
         joint_menu = self.menu_assign.addMenu("Joint")
+        joint_menu.setIcon(qta.icon('fa5s.dot-circle', color='#6c757d'))
         
-        restraint_action = QAction("Restraints...", self)
+        restraint_action = QAction(qta.icon('fa5s.anchor', color='#6c757d'), "Restraints...", self)
         restraint_action.triggered.connect(self.on_assign_restraints)
         joint_menu.addAction(restraint_action)
 
-        constraint_action = QAction("Diaphragms / Constraints...", self)
+        constraint_action = QAction(qta.icon('fa5s.link', color='#6c757d'), "Diaphragms / Constraints...", self)
         constraint_action.triggered.connect(self.on_assign_constraints)
         joint_menu.addAction(constraint_action)
 
-        load_action = QAction("Forces...", self)
+        load_action = QAction(qta.icon('fa5s.arrow-down', color='#6c757d'), "Forces...", self)
         load_action.triggered.connect(self.on_assign_joint_load)
         joint_menu.addAction(load_action)
 
         frame_menu = self.menu_assign.addMenu("Frame")
+        frame_menu.setIcon(qta.icon('fa5s.minus', color='#6c757d'))
 
-        frame_point_action = QAction("Point Loads...", self)
+        frame_point_action = QAction(qta.icon('fa5s.compress-arrows-alt', color='#6c757d'), "Point Loads...", self)
         frame_point_action.triggered.connect(self.on_assign_frame_point_load)
         frame_menu.addAction(frame_point_action)
 
-        frame_load_action = QAction("Distributed Loads...", self)
+        frame_load_action = QAction(qta.icon('fa5s.stream', color='#6c757d'), "Distributed Loads...", self)
         frame_load_action.triggered.connect(self.on_assign_frame_load)
         frame_menu.addAction(frame_load_action)
 
-        frame_rel_action = QAction("Releases & Partial Fixity...", self)
+        frame_rel_action = QAction(qta.icon('fa5s.unlink', color='#6c757d'), "Releases & Partial Fixity...", self)
         frame_rel_action.triggered.connect(self.on_assign_releases)
         frame_menu.addAction(frame_rel_action)
 
-        ins_point_action = QAction("Insertion Point...", self)
+        ins_point_action = QAction(qta.icon('fa5s.crosshairs', color='#6c757d'), "Insertion Point...", self)
         ins_point_action.triggered.connect(self.on_assign_insertion_point)
         frame_menu.addAction(ins_point_action)
 
-        end_offset_action = QAction("End Length Offsets...", self)
+        end_offset_action = QAction(qta.icon('fa5s.arrows-alt-h', color='#6c757d'), "End Length Offsets...", self)
         end_offset_action.triggered.connect(self.on_assign_end_offsets)
         frame_menu.addAction(end_offset_action)
 
-        local_axis_action = QAction("Local Axes...", self)
+        local_axis_action = QAction(qta.icon('fa5s.location-arrow', color='#6c757d'), "Local Axes...", self)
         local_axis_action.triggered.connect(self.on_assign_local_axis)
         frame_menu.addAction(local_axis_action)
 
         self.menu_analyze = menubar.addMenu("Analyze")
 
-        self.run_action = QAction("Run Analysis...", self)
-        self.run_action.setShortcut("F5") 
-        self.run_action.triggered.connect(self.on_run_analysis_dialog)
         self.menu_analyze.addAction(self.run_action)
         self.menu_analyze.addSeparator()
 
-        self.solid_run_action = QAction("Run Solid Analysis...", self)
+        self.solid_run_action = QAction(qta.icon('fa5s.cube', color='#6c757d'), "Run Solid Analysis...", self)
         self.solid_run_action.triggered.connect(self.on_run_solid_analysis)
         self.menu_analyze.addAction(self.solid_run_action)
 
         self.menu_analyze.addAction(self.btn_deform)
 
+        self.action_deform_opts = QAction("Deformed Shape Options...", self)
+        self.action_deform_opts.triggered.connect(self.on_view_deformed_shape)
+        self.action_deform_opts.setEnabled(False)
+        self.menu_analyze.addAction(self.action_deform_opts)
+
         self.menu_analyze.addSeparator()
-        self.res_action = QAction("Show Result Tables...", self)
+        self.res_action = QAction(qta.icon('fa5s.table', color='#6c757d'), "Show Result Tables...", self)
         self.res_action.triggered.connect(self.on_show_modal_results)
         self.menu_analyze.addAction(self.res_action)
 
         self.menu_options = menubar.addMenu("Options")
         
-        gfx_action = QAction("Graphics Preferences...", self)
+        gfx_action = QAction(qta.icon('fa5s.desktop', color='#6c757d'), "Graphics Preferences...", self)
         gfx_action.triggered.connect(self.on_graphics_options)
         self.menu_options.addAction(gfx_action)
 
@@ -462,6 +606,31 @@ class MainWindow(QMainWindow):
         self.canvas.signal_mouse_moved.connect(self.on_mouse_moved)
         
         self.setup_statusbar()
+
+    def _toolbar_zoom_in(self):
+        """Zoom in button — simulates a scroll-up at canvas centre."""
+        w, h = self.canvas.width(), self.canvas.height()
+        self.canvas.camera.zoom(120, w / 2, h / 2, w, h)
+
+    def _toolbar_zoom_out(self):
+        """Zoom out button — simulates a scroll-down at canvas centre."""
+        w, h = self.canvas.width(), self.canvas.height()
+        self.canvas.camera.zoom(-120, w / 2, h / 2, w, h)
+
+    def _toolbar_toggle_animation(self):
+        """▶ Animate button — opens the deformed shape dialog if needed,
+        then toggles play/pause directly."""
+        if not self.model or not self.model.has_results:
+            QMessageBox.warning(self, "No Results", "Please run the analysis first.")
+            return
+                                                                  
+        self.on_view_deformed_shape()
+                                                       
+        dlg = getattr(self, '_deformed_dlg', None)
+        if dlg and dlg.isVisible():
+            checked = not dlg.btn_animate.isChecked()
+            dlg.btn_animate.setChecked(checked)
+            dlg.on_toggle_anim()
 
     def on_mouse_moved(self, x, y, z):
         self.lbl_coords.setText(f"X: {x:.2f}  Y: {y:.2f}  Z: {z:.2f}")
@@ -505,6 +674,14 @@ class MainWindow(QMainWindow):
         self.run_action.setEnabled(editable)
         self.solid_run_action.setEnabled(editable)
         self.res_action.setEnabled(not editable)
+
+        if hasattr(self, 'btn_deform'):
+            self.btn_deform.setEnabled(not editable)
+        if hasattr(self, 'btn_play_anim'):
+            self.btn_play_anim.setEnabled(not editable)
+
+        if hasattr(self, 'action_deform_opts'):
+            self.action_deform_opts.setEnabled(not editable)
 
         if hasattr(self, 'menu_edit'):
             self.menu_edit.setEnabled(editable)
@@ -826,38 +1003,35 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         hit_something = False 
 
-        if hasattr(self.model, 'has_results') and self.model.has_results:
-            clicked_node_id = self._get_node_under_mouse()
-            
-            if clicked_node_id is not None:
-                                          
-                res_action = menu.addAction(f"Joint {clicked_node_id} Results...")
-                
-                def show_node_dlg():
-                    from app.dialogs.node_results_dialog import NodeResultsDialog
-                                                                                
-                    self._node_res_dlg = NodeResultsDialog(clicked_node_id, self.model, self)
-                    self._node_res_dlg.signal_mode_changed.connect(self.switch_modal_view)
-                    
-                    if hasattr(self.canvas, 'animation_manager') and getattr(self.canvas, 'ltha_mode', False):
-                                                                               
-                        self.canvas.animation_manager.signal_ltha_frame_update.connect(self._node_res_dlg.update_live_values)
-                        
-                        idx = self._node_res_dlg.combo_cases.findData("LTHA_LIVE")
-                        if idx >= 0:
-                            self._node_res_dlg.combo_cases.setCurrentIndex(idx)
-                                                         
-                    self._node_res_dlg.show()
-                    
-                res_action.triggered.connect(show_node_dlg)
-                menu.addSeparator()
-                hit_something = True
+        target_node_id = getattr(self.canvas, 'hovered_node_id', None)
+        if target_node_id is None and len(self.selected_node_ids) == 1:
+            target_node_id = self.selected_node_ids[0]
 
-        if len(self.selected_ids) == 1:
-            eid = self.selected_ids[0]
-            menu.addAction(f"Frame {eid} Actions:").setEnabled(False)
-            menu.addSeparator()
+        target_elem_id = getattr(self.canvas, 'hovered_elem_id', None)
+        if target_elem_id is None and len(self.selected_ids) == 1:
+            target_elem_id = self.selected_ids[0]
+
+        if target_node_id is not None and hasattr(self.model, 'has_results') and self.model.has_results:
+            res_action = menu.addAction(f"Joint {target_node_id} Results...")
             
+            def show_node_dlg():
+                from app.dialogs.node_results_dialog import NodeResultsDialog
+                self._node_res_dlg = NodeResultsDialog(target_node_id, self.model, self)
+                self._node_res_dlg.signal_mode_changed.connect(self.switch_modal_view)
+                
+                if hasattr(self.canvas, 'animation_manager') and getattr(self.canvas, 'ltha_mode', False):
+                    self.canvas.animation_manager.signal_ltha_frame_update.connect(self._node_res_dlg.update_live_values)
+                    idx = self._node_res_dlg.combo_cases.findData("LTHA_LIVE")
+                    if idx >= 0:
+                        self._node_res_dlg.combo_cases.setCurrentIndex(idx)
+                self._node_res_dlg.show()
+                
+            res_action.triggered.connect(show_node_dlg)
+            menu.addSeparator()
+            hit_something = True
+
+        if target_elem_id is not None:
+            eid = target_elem_id
             menu.addAction(f"Frame {eid} Actions:").setEnabled(False)
             menu.addSeparator()
 
@@ -870,11 +1044,11 @@ class MainWindow(QMainWindow):
             info_action.triggered.connect(show_info)
 
             if hasattr(self.model, 'has_results') and self.model.has_results:
-                
                 spy_action = menu.addAction("Show Matrices (K, T, FEE)")
                 def show_spy():
                     if hasattr(self, 'solver_output_path') and self.solver_output_path:
                         base = self.solver_output_path.replace("_results.json", "_matrices.json")
+                        from app.dialogs.spy_dialogs import MatrixSpyDialog
                         dlg = MatrixSpyDialog(eid, base, self)
                         dlg.exec()
                 spy_action.triggered.connect(show_spy)
@@ -883,37 +1057,25 @@ class MainWindow(QMainWindow):
                 def show_fbd():
                     if hasattr(self, 'solver_output_path') and self.solver_output_path:
                         base = self.solver_output_path.replace("_results.json", "_matrices.json")
+                        from app.dialogs.spy_dialogs import FBDViewerDialog
                         dlg = FBDViewerDialog(eid, self.model, self.solver_output_path, base, self)
                         dlg.exec()
                 fbd_action.triggered.connect(show_fbd)
                 
-                diag_action = menu.addAction("Show Shear/Moment Diagrams")
-                def show_diagrams():
-                    if eid in self.model.elements:
-                        from app.dialogs.frame_results_dialog import FrameResultDialog
-                        dlg = FrameResultDialog(self.model.elements[eid], self.model, self)
-                        dlg.exec()
-                diag_action.triggered.connect(show_diagrams)
-
             hit_something = True
 
         if self.selected_ids or self.selected_node_ids:
+            menu.addSeparator()
             delete_action = menu.addAction("Delete Selection")
-            
-            action = menu.exec(QCursor.pos())
-            
-            if action == delete_action:
-                self.delete_current_selection()
-            
+            delete_action.triggered.connect(self.delete_current_selection)
             hit_something = True
 
         if not hit_something:
             grid_action = menu.addAction("Edit Grid Data...")
-            action = menu.exec(QCursor.pos())
-            
-            if action == grid_action:
-                self.open_grid_editor()
-                     
+            grid_action.triggered.connect(self.open_grid_editor)
+
+        menu.exec(QCursor.pos())
+
     def open_grid_editor(self):
         if not self.model: return
         from app.dialogs.grid_dialog import GridEditorDialog
@@ -1286,8 +1448,16 @@ class MainWindow(QMainWindow):
         
         self.solver_input_path = self.model.file_path
         
+        case_obj = self.model.load_cases.get(case_name)
+        c_type = case_obj.case_type if case_obj else "Linear Static"
+
+        self.solver_input_path = self.model.file_path
         base_name = os.path.splitext(self.solver_input_path)[0]
-        self.solver_output_path = f"{base_name}_results.json"
+
+        if c_type == "Modal":
+            self.solver_output_path = f"{base_name}_MODAL_results.json"
+        else:
+            self.solver_output_path = f"{base_name}_{case_name}_results.json"
         
         try:
             self.model.save_to_file(self.solver_input_path)
@@ -1296,8 +1466,11 @@ class MainWindow(QMainWindow):
             self.finish_analysis_sequence(False, f"Could not save input file: {e}")
             return
 
-        case_obj = self.model.load_cases.get(case_name)
-        c_type = case_obj.case_type if case_obj else "Linear Static"
+        if c_type == "Buckling":
+            QApplication.restoreOverrideCursor()
+            self.set_interface_state(True)                                           
+            self._run_buckling_analysis(case_name, case_obj)
+            return
 
         self.worker = SolverWorker(
             self.solver_input_path, 
@@ -1319,10 +1492,140 @@ class MainWindow(QMainWindow):
             self.set_interface_state(True) 
             QMessageBox.critical(self, "Analysis Failed", message)
 
-    def load_analysis_results(self):
-        """Reads the specific result file generated for this model."""
+    def _run_buckling_analysis(self, case_name: str, case_obj):
+        """
+        Dedicated dispatcher for Buckling analysis.
+        Buckling requires a prior Linear Static run — it reads element forces
+        from _results.json and transformation matrices from _matrices.json.
+        """
         import json
+        from PyQt6.QtCore import QThread, pyqtSignal as _Signal
+
+        base_name      = os.path.splitext(self.model.file_path)[0]
+        input_path     = self.model.file_path
         
+        applied_load = case_obj.loads[0][0] if (hasattr(case_obj, 'loads') and case_obj.loads) else "DEAD"
+        
+        static_results = f"{base_name}_{applied_load}_results.json"
+        matrices_path  = f"{base_name}_{applied_load}_matrices.json"
+        
+        buckling_out   = f"{base_name}_{case_name}_results.json"
+
+        missing = []
+        if not os.path.exists(static_results):
+            missing.append(f"• Linear Static results:  {os.path.basename(static_results)}")
+        if not os.path.exists(matrices_path):
+            missing.append(f"• Stiffness matrices:     {os.path.basename(matrices_path)}")
+
+        if missing:
+            QMessageBox.warning(
+                self,
+                "Static Analysis Required",
+                "Buckling analysis needs element forces from a prior Linear Static run.\n\n"
+                "The following files are missing:\n"
+                + "\n".join(missing)
+                + "\n\nPlease run the Linear Static (DEAD) case first, then re-run Buckling."
+            )
+            return
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        self.set_interface_state(False)
+        self.status.showMessage(f"Running Buckling Analysis: {case_name}... Please Wait.")
+
+        class _BucklingThread(QThread):
+            finished = _Signal(bool, str)
+
+            def __init__(self, in_path, out_path, res_path, mat_path, c_name):
+                super().__init__()
+                self._in     = in_path
+                self._out    = out_path
+                self._res    = res_path
+                self._mat    = mat_path
+                self._cname  = c_name
+
+            def run(self):
+                try:
+                    from core.solver.buckling.buckling_engine import run_buckling_analysis
+                    ok = run_buckling_analysis(self._in, self._out, self._res, self._mat, self._cname)
+                    self.finished.emit(bool(ok), "" if ok else "Engine returned failure status.")
+                except Exception as e:
+                    self.finished.emit(False, str(e))
+
+        self._buckling_thread = _BucklingThread(
+            input_path, buckling_out, static_results, matrices_path, case_name
+        )
+        self._buckling_thread.finished.connect(
+            lambda ok, msg: self._finish_buckling(ok, msg, buckling_out, case_name)
+        )
+        self._buckling_thread.start()
+
+    def _finish_buckling(self, success: bool, message: str,
+                         buckling_out: str, case_name: str):
+        """Called when the buckling thread finishes."""
+        import json
+        QApplication.restoreOverrideCursor()
+        self.set_interface_state(True)                                             
+
+        if not success:
+            QMessageBox.critical(
+                self, "Buckling Analysis Failed",
+                f"The buckling engine encountered an error:\n\n{message}"
+            )
+            return
+
+        if not os.path.exists(buckling_out):
+            QMessageBox.critical(self, "Buckling Analysis Failed",
+                                 f"Output file not found:\n{buckling_out}")
+            return
+
+        try:
+            with open(buckling_out, "r") as f:
+                results = json.load(f)
+        except Exception as e:
+            QMessageBox.critical(self, "Results Load Error",
+                                 f"Could not parse buckling results:\n{e}")
+            return
+
+        if results.get("status") == "FAILED":
+            err = results.get("error", {})
+            QMessageBox.critical(
+                self, "Buckling Analysis Failed",
+                f"{err.get('title', 'Unknown Error')}\n\n{err.get('desc', '')}"
+            )
+            return
+
+        self.status.showMessage(f"Buckling Analysis Complete — {case_name}")
+
+        self.model.results = results
+        self.model.has_results = True
+
+        self.canvas.view_deflected = False
+        self.canvas.invalidate_deflection_cache()
+        self.canvas.anim_factor = 1.0
+        self.canvas.cache_scale_used = None
+        if hasattr(self.canvas, 'animation_manager'):
+            self.canvas.animation_manager.invalidate_prerender()
+
+        self.btn_deform.setEnabled(True)
+        self.btn_deform.setChecked(True)
+        self.canvas.view_deflected = True
+        self.lock_model()
+
+        if "mode_shapes" in results and "Mode 1" in results["mode_shapes"]:
+            self.switch_modal_view("Mode 1")
+        else:
+            self.canvas.draw_model(self.model)
+
+        from app.dialogs.analysis_results_dialog import AnalysisResultsDialog
+        dlg = AnalysisResultsDialog(self.model.results, self)
+        dlg.exec()
+
+        if self.model.results.get("mode_shapes") and "Mode 1" in self.model.results["mode_shapes"]:
+            self.switch_modal_view("Mode 1")
+
+    def load_analysis_results(self):
+        import json
+
         if not hasattr(self, 'solver_output_path') or not self.solver_output_path:
             QMessageBox.warning(self, "Error", "Result path is undefined.")
             return
@@ -1384,10 +1687,26 @@ class MainWindow(QMainWindow):
                     self.canvas.animation_manager.disable_ltha_mode()
 
             self.btn_deform.setEnabled(True)
+            self.btn_deform.setChecked(True)                                
             self.canvas.view_deflected = True
             
             self.lock_model()
-            self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
+            info_type = data.get("info", {}).get("type", "")
+            
+            if info_type in ["Modal Analysis", "Buckling Analysis"]:
+                                                                                   
+                if "mode_shapes" in data and "Mode 1" in data["mode_shapes"]:
+                    self.switch_modal_view("Mode 1")
+                else:
+                    self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
+                    
+            elif info_type == "Linear Time History Analysis":
+                                             
+                self.switch_modal_view("LTHA_LIVE")
+                
+            else:
+                                                                           
+                self.switch_modal_view("MAIN_RESULT")
             
             QMessageBox.information(self, "Success", "Analysis Complete. Results Loaded.\nRight-click any joint to view deformations.")
 
@@ -1398,8 +1717,8 @@ class MainWindow(QMainWindow):
     def lock_model(self):
         self.is_locked = True
         self.set_interface_state(False)
-        
-        self.btn_lock.setText("🔒")
+                                                              
+        self.btn_lock.setIcon(qta.icon('fa5s.lock', color="#c76963")) 
         self.btn_lock.setToolTip("Analysis Results Active. Click to Unlock and Edit.")
 
     def unlock_model(self):
@@ -1414,6 +1733,7 @@ class MainWindow(QMainWindow):
                 return
 
         self.btn_deform.setEnabled(False)
+        self.btn_deform.setChecked(False)                              
         self.canvas.view_deflected = False  
 
         self.view_shadow = True
@@ -1446,7 +1766,8 @@ class MainWindow(QMainWindow):
 
         self.set_interface_state(True)
         
-        self.btn_lock.setText("🔓")
+        self.btn_lock.setIcon(qta.icon('fa5s.unlock', color='#6c757d'))
+        self.btn_lock.setText("") 
         self.btn_lock.setToolTip("Model is editable.")
                                           
         self.status.showMessage("Results discarded. Model unlocked for editing.")
@@ -1719,48 +2040,36 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def on_show_modal_results(self):
-                                                 
         if not self.model or not self.model.results:
             QMessageBox.warning(self, "No Results", "Please run an Analysis first.")  
             return
 
-        from app.dialogs.modal_results_dialog import ModalResultsDialog 
-        dlg = ModalResultsDialog(self.model.results, self)
+        from app.dialogs.analysis_results_dialog import AnalysisResultsDialog 
+        dlg = AnalysisResultsDialog(self.model.results, self)
         dlg.exec()
 
     def switch_modal_view(self, mode_key):
-        """
-        Updates the global "displacements" to match the selected Mode Shape or Result.
-        Includes SMART AUTO-SCALING and the LTHA Safety Lock.
-        """
         if not self.model or not self.model.results: return
         
         target_data = {}
+        info_type = self.model.results.get("info", {}).get("type", "")
 
         if mode_key == "MAIN_RESULT" or mode_key == "LTHA_LIVE":
-            if "_base_displacements" in self.model.results:
-                target_data = self.model.results["_base_displacements"]
-                
-                if mode_key == "MAIN_RESULT":
-                    self.status.showMessage("Displaying: Peak Static Envelope")
-                    
-                    if self.model.results.get("info", {}).get("type") == "Linear Time History Analysis":
-                        if hasattr(self.canvas, 'animation_manager') and self.canvas.animation_manager.is_running:
-                            self.canvas.animation_manager.stop_animation()
-                            
-                            if hasattr(self, '_deformed_dlg') and self._deformed_dlg is not None:
-                                self._deformed_dlg.btn_animate.setChecked(False)
-                                self._deformed_dlg.update_anim_button_style()
-                else:
-                    self.status.showMessage("Displaying: LTHA Live Playback")
+                                                                                     
+            target_data = self.model.results.get("_base_displacements", self.model.results.get("displacements", {}))
+            
+            if mode_key == "MAIN_RESULT":
+                self.status.showMessage(f"Displaying: {info_type}")
             else:
-                return 
+                self.status.showMessage("Displaying: LTHA Live Playback")
+
         else:
             shapes = self.model.results.get("mode_shapes", {})
             if mode_key in shapes:
                 target_data = shapes[mode_key]
                 self.status.showMessage(f"Displaying: {mode_key}")
             else:
+                print(f"Warning: {mode_key} not found in results.")
                 return
 
         self.model.results["displacements"] = target_data
@@ -1929,6 +2238,35 @@ class MainWindow(QMainWindow):
         self.undo_stack.setClean()
         self.update_window_title()
         self.status.showMessage(f"Saved via terminal: {model.file_path}")
+
+    def _toolbar_toggle_deform(self, checked):
+        """Directly toggles the deformed shape on the canvas without opening the dialog."""
+        if not self.model or not self.model.has_results:
+            return
+        
+        self.canvas.view_deflected = checked
+        self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
+        
+        state_msg = "ON" if checked else "OFF"
+        self.status.showMessage(f"Deformed Shape: {state_msg} (Scale: {self.canvas.deflection_scale:.2f}x)")
+
+    def _toggle_pan(self, checked):
+        if checked:
+                                           
+            self.canvas.setCursor(Qt.CursorShape.OpenHandCursor)
+            
+            self.canvas.single_use_pan_active = True 
+            self.status.showMessage("Pan Tool Active: Left-click and drag to move camera.")
+            
+            if getattr(self, 'draw_mode_active', False):
+                self.on_draw_finished()
+                if self.draw_dialog:
+                    self.draw_dialog.hide()
+        else:
+                                           
+            self.canvas.setCursor(Qt.CursorShape.ArrowCursor)
+            self.canvas.single_use_pan_active = False
+            self.status.showMessage("Ready")
 
 def main():
     if sys.platform == 'win32':

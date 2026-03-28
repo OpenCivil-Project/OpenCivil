@@ -155,6 +155,36 @@ class MassSourceDataDialog(QDialog):
         if not new_name:
              QMessageBox.warning(self, "Error", "Name required.")
              return
+        
+        incl_self_mass = self.chk_self_mass.isChecked()
+        incl_patterns = self.chk_patterns.isChecked()
+
+        if incl_self_mass and incl_patterns:
+            double_count_risk = False
+                                                        
+            for r in range(self.table.rowCount()):
+                pat_name = self.table.item(r, 0).text()
+                
+                if pat_name in self.model.load_patterns:
+                    lp = self.model.load_patterns[pat_name]
+                                                                                      
+                    if lp.self_weight_multiplier > 0:
+                        double_count_risk = True
+                        break
+            
+            if double_count_risk:
+                reply = QMessageBox.question(
+                    self, 
+                    "Warning: Potential Double Counting", 
+                    "You have selected both 'Element Self Mass' and a Load Pattern that includes self-weight > 0.\n\n"
+                    "This may result in self-weight being counted twice in the mass matrix.\n\n"
+                    "Are you sure you want to proceed?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                
+                if reply == QMessageBox.StandardButton.No:
+                    return
              
         self.mass_source.name = new_name
         self.mass_source.include_self_mass = self.chk_self_mass.isChecked()

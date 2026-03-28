@@ -32,7 +32,7 @@ def _write_error(out_path, error_code, extra=""):
         pass
     return True
 
-def run_modal_analysis(input_json_path, output_json_path):
+def run_modal_analysis(input_json_path, output_json_path, target_case_name="MODAL"):
     print("="*60)
     print(f"METUFIRE MODAL ENGINE | V0.3 (Shift-Invert)")
     print(f"Target: {os.path.basename(input_json_path)}")
@@ -44,7 +44,7 @@ def run_modal_analysis(input_json_path, output_json_path):
         print("[1/6] Initializing Data Manager...")
         dm = DataManager(input_json_path)
         target_case = "MODAL"
-        dm.process_all(case_name=target_case)
+        dm.process_all(case_name=target_case_name)
     except Exception as e:
         print(f"FATAL: Data Load Error: {e}")
         return _write_error(output_json_path, "E102", str(e))
@@ -57,7 +57,7 @@ def run_modal_analysis(input_json_path, output_json_path):
         res = assembler.assemble_system()
         K_full = res[0]                    
         
-        modal_case_def = next((c for c in dm.raw['load_cases'] if c['name'] == "MODAL"), None)
+        modal_case_def = next((c for c in dm.raw['load_cases'] if c['name'] == target_case_name), None)
         ms_name = modal_case_def.get("mass_source", "Default") if modal_case_def else "Default"
         
         mass_assembler = GlobalMassAssembler(dm)

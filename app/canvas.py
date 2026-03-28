@@ -10,6 +10,7 @@ from post.animation import AnimationManager
 from graphic.view_cube import ViewCube
 from OpenGL.GL import *
 from core.properties import RectangularSection, CircularSection, TrapezoidalSection
+from PyQt6.QtWidgets import QLabel                                         
 
 class MCanvas3D(gl.GLViewWidget):
     signal_canvas_clicked = pyqtSignal(float, float, float)
@@ -60,6 +61,7 @@ class MCanvas3D(gl.GLViewWidget):
         self.deflection_scale = 50.0
         self.view_shadow = True
         self.shadow_color = (0.7, 0.7, 0.7, 0.5)
+        self.show_grid = True
 
         self.deflection_cache = {}
         self.cache_valid = False
@@ -232,7 +234,8 @@ class MCanvas3D(gl.GLViewWidget):
         for item in self.items[:]:
             self.removeItem(item)
 
-        self._draw_reference_grids(model)
+        if not self.view_deflected:
+            self._draw_reference_grids(model)
 
         if self.show_joints or self.show_supports:
             self._draw_nodes(model)
@@ -245,8 +248,17 @@ class MCanvas3D(gl.GLViewWidget):
         else:
                               
             self._draw_elements_wireframe(model) 
+
+        in_analysis_mode = hasattr(model, 'has_results') and model.has_results
+        
+        if self.show_loads and not in_analysis_mode:
+            self._draw_loads(model)                      
+            self._draw_member_loads(model)                             
+            self._draw_member_point_loads(model)
             
-        if self.show_loads:
+        in_analysis_mode = hasattr(model, 'has_results') and model.has_results
+        
+        if self.show_loads and not in_analysis_mode:
             self._draw_loads(model)                      
             self._draw_member_loads(model)                             
             self._draw_member_point_loads(model)
@@ -270,7 +282,7 @@ class MCanvas3D(gl.GLViewWidget):
         pos_free = []
         sel_pos = []
         ghost_pos = []
-        supports_fixed = []; supports_pinned = []; supports_roller = []
+        supports_fixed = []; supports_pinned = []; supports_roller = []; supports_custom = []
 
         size = self.display_config.get("node_size", 6)
         color_tuple = self.display_config.get("node_color", (1, 1, 0, 1))
@@ -295,12 +307,15 @@ class MCanvas3D(gl.GLViewWidget):
             r = n.restraints
             is_fixed = all(r[:3]) and all(r[3:]) 
             is_pinned = all(r[:3]) and not any(r[3:]) 
+            is_roller = r[2] and not any(r[0:2]) and not any(r[3:])                  
             has_any = any(r)
 
-            if has_any and self.show_supports:
+            in_analysis_mode = hasattr(model, 'has_results') and model.has_results
+            if has_any and self.show_supports and not in_analysis_mode:
                 if is_fixed: supports_fixed.append(xyz)
                 elif is_pinned: supports_pinned.append(xyz)
-                else: supports_roller.append(xyz)
+                elif is_roller: supports_roller.append(xyz)
+                else: supports_custom.append(xyz)
             elif self.show_joints and not is_sel:
                  pos_free.append(xyz)
 
@@ -324,6 +339,7 @@ class MCanvas3D(gl.GLViewWidget):
         if supports_fixed: self._draw_support_meshes(supports_fixed, 'fixed')
         if supports_pinned: self._draw_support_meshes(supports_pinned, 'pinned')
         if supports_roller: self._draw_support_meshes(supports_roller, 'roller')
+        if supports_custom: self._draw_support_meshes(supports_custom, 'custom')
         
         if ghost_pos and self.show_joints:
             item = gl.GLScatterPlotItem(
@@ -925,98 +941,123 @@ class MCanvas3D(gl.GLViewWidget):
 
     def _draw_support_meshes(self, positions, s_type):
         """
-        Draws 3D shapes for supports.
-        Fixed = Cube, Pinned = Pyramid, Roller = Sphere
+        Draws realistic 3D shapes for supports.
+        Fixed = Concrete block + Baseplate
+        Pinned = Baseplate + Hinge Pyramid
+        Roller = Baseplate + Sphere (Roller)
+        Custom = Floating Octahedron (Mixed/Partial constraints)
         """
         if not positions: return
 
         all_verts = []
         all_faces = []
         all_colors = []
-        
-        s = 0.3                                       
-        
-        if s_type == 'fixed': c = (0, 1, 1, 1) 
-        else: c = (0, 1, 0, 1)
-
         idx_offset = 0
+
+        if s_type == 'fixed': c = (0.40, 0.45, 0.50, 1.0)                
+        elif s_type == 'pinned': c = (0.25, 0.55, 0.75, 1.0)               
+        elif s_type == 'roller': c = (0.20, 0.65, 0.50, 1.0)              
+        else: c = (0.85, 0.55, 0.20, 1.0)                                   
+
+        s = 0.25 
+
+        def add_box(cx, cy, cz, wx, wy, wz):
+            nonlocal idx_offset
+            v = [
+                [cx-wx, cy-wy, cz-wz], [cx+wx, cy-wy, cz-wz], [cx+wx, cy+wy, cz-wz], [cx-wx, cy+wy, cz-wz],
+                [cx-wx, cy-wy, cz+wz], [cx+wx, cy-wy, cz+wz], [cx+wx, cy+wy, cz+wz], [cx-wx, cy+wy, cz+wz]
+            ]
+            f = [
+                [0, 1, 2], [0, 2, 3], [4, 5, 6], [4, 6, 7],
+                [0, 1, 5], [0, 5, 4], [2, 3, 7], [2, 7, 6],
+                [0, 3, 7], [0, 7, 4], [1, 2, 6], [1, 6, 5]
+            ]
+            all_verts.extend(v)
+            all_faces.extend([[i + idx_offset for i in face] for face in f])
+            for _ in range(8): all_colors.append(c)
+            idx_offset += 8
+
+        def add_pyramid(apex_x, apex_y, apex_z, base_w, height):
+            nonlocal idx_offset
+            z_base = apex_z - height
+            v = [
+                [apex_x, apex_y, apex_z],
+                [apex_x-base_w, apex_y-base_w, z_base], [apex_x+base_w, apex_y-base_w, z_base],
+                [apex_x+base_w, apex_y+base_w, z_base], [apex_x-base_w, apex_y+base_w, z_base]
+            ]
+            f = [
+                [0, 1, 2], [0, 2, 3], [0, 3, 4], [0, 4, 1],
+                [1, 2, 3], [1, 3, 4]
+            ]
+            all_verts.extend(v)
+            all_faces.extend([[i + idx_offset for i in face] for face in f])
+            for _ in range(5): all_colors.append(c)
+            idx_offset += 5
+
+        def add_sphere(cx, cy, cz, radius, bands=8):
+            nonlocal idx_offset
+            local_verts = []
+            local_faces = []
+            
+            for i in range(bands + 1):
+                lat = np.pi * i / bands
+                z_val = np.cos(lat)
+                r_ring = np.sin(lat)
+                for j in range(bands):
+                     lon = 2 * np.pi * j / bands
+                     x_val = r_ring * np.cos(lon)
+                     y_val = r_ring * np.sin(lon)
+                     local_verts.append([cx + x_val*radius, cy + y_val*radius, cz + z_val*radius])
+            
+            for i in range(bands):
+                for j in range(bands):
+                    row1 = i * bands
+                    row2 = (i + 1) * bands
+                    c1 = j
+                    c2 = (j + 1) % bands
+                    p1, p2 = row1 + c1, row1 + c2
+                    p3, p4 = row2 + c2, row2 + c1
+                    local_faces.append([p1, p2, p4])
+                    local_faces.append([p2, p3, p4])
+
+            all_verts.extend(local_verts)
+            all_faces.extend([[i + idx_offset for i in face] for face in local_faces])
+            for _ in range(len(local_verts)): all_colors.append(c)
+            idx_offset += len(local_verts)
 
         for x, y, z in positions:
             if s_type == 'fixed':
-                                        
-                z_top = z
-                z_bot = z - (2 * s)
-                
-                v = [
-                    [x-s, y-s, z_bot], [x+s, y-s, z_bot], [x+s, y+s, z_bot], [x-s, y+s, z_bot], 
-                    [x-s, y-s, z_top], [x+s, y-s, z_top], [x+s, y+s, z_top], [x-s, y+s, z_top]
-                ]
-                f = [
-                    [0, 1, 2], [0, 2, 3], [4, 5, 6], [4, 6, 7],           
-                    [0, 1, 5], [0, 5, 4], [2, 3, 7], [2, 7, 6],              
-                    [0, 3, 7], [0, 7, 4], [1, 2, 6], [1, 6, 5]               
-                ]
-                all_verts.extend(v)
-                all_faces.extend([[i + idx_offset for i in face] for face in f])
-                for _ in range(8): all_colors.append(c)
-                idx_offset += 8
+                                                     
+                add_box(x, y, z - s, s*0.8, s*0.8, s)
+                add_box(x, y, z - s*2.1, s*1.2, s*1.2, s*0.1)
 
             elif s_type == 'pinned':
-                                           
-                v = [
-                    [x, y, z],                        
-                    [x-s, y-s, z-s*2], [x+s, y-s, z-s*2], 
-                    [x+s, y+s, z-s*2], [x-s, y+s, z-s*2]
-                ]
-                f = [
-                    [0, 1, 2], [0, 2, 3], [0, 3, 4], [0, 4, 1],        
-                    [1, 2, 3], [1, 3, 4]                              
-                ]
-                all_verts.extend(v)
-                all_faces.extend([[i + idx_offset for i in face] for face in f])
-                for _ in range(5): all_colors.append(c)
-                idx_offset += 5
+                                            
+                add_pyramid(x, y, z, s*0.8, s*1.8)
+                add_box(x, y, z - s*1.9, s*1.2, s*1.2, s*0.1)
 
             elif s_type == 'roller':
                                                         
-                radius = s
-                bands = 8 
-                z_center = z - radius                     
-                
-                local_verts = []
-                local_faces = []
-                
-                for i in range(bands + 1):
-                    lat = np.pi * i / bands                          
-                    z_val = np.cos(lat)
-                    r_ring = np.sin(lat)
-                    
-                    for j in range(bands):           
-                         lon = 2 * np.pi * j / bands
-                         x_val = r_ring * np.cos(lon)
-                         y_val = r_ring * np.sin(lon)
-                                                    
-                         local_verts.append([x + x_val*radius, y + y_val*radius, z_center + z_val*radius])
-                
-                for i in range(bands):
-                    for j in range(bands):
-                        row1 = i * bands
-                        row2 = (i + 1) * bands
-                        
-                        c1 = j
-                        c2 = (j + 1) % bands
-                        
-                        p1, p2 = row1 + c1, row1 + c2
-                        p3, p4 = row2 + c2, row2 + c1
-                        
-                        local_faces.append([p1, p2, p4])
-                        local_faces.append([p2, p3, p4])
+                add_sphere(x, y, z - s*0.9, s*0.9)            
+                add_box(x, y, z - s*1.9, s*1.2, s*1.2, s*0.1)                  
 
-                all_verts.extend(local_verts)
-                all_faces.extend([[idx + idx_offset for idx in face] for face in local_faces])
-                
-                for _ in range(len(local_verts)): all_colors.append(c)
-                idx_offset += len(local_verts)
+            elif s_type == 'custom':
+                                                                  
+                add_pyramid(x, y, z, s*0.6, s)
+                v = [
+                    [x, y, z],
+                    [x-s*0.6, y-s*0.6, z-s], [x+s*0.6, y-s*0.6, z-s], 
+                    [x+s*0.6, y+s*0.6, z-s], [x-s*0.6, y+s*0.6, z-s],
+                    [x, y, z-s*2]
+                ]
+                f = [
+                    [0, 1, 2], [0, 2, 3], [0, 3, 4], [0, 4, 1],
+                    [5, 2, 1], [5, 3, 2], [5, 4, 3], [5, 1, 4]
+                ]
+                all_verts.extend(v)
+                all_faces.extend([[i + idx_offset for i in face] for face in f])
+                for _ in range(6): all_colors.append(c)
+                idx_offset += 6
 
         if not all_verts: return
 
@@ -1029,7 +1070,7 @@ class MCanvas3D(gl.GLViewWidget):
             glOptions='opaque'
         )
         self.addItem(mesh)
-    
+
     def _draw_loads(self, model):
         """
         Visualizes Nodal Loads.
@@ -1852,6 +1893,11 @@ class MCanvas3D(gl.GLViewWidget):
         modifiers = QApplication.keyboardModifiers()
         
         if event.button() == Qt.MouseButton.LeftButton:
+                                                 
+            if getattr(self, 'single_use_pan_active', False):
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)                           
+                return                                                      
+                                                 
             if self.snapping_enabled:
                 pos = event.pos()
                 snap_coord = self.get_snap_point(pos.x(), pos.y())
@@ -1869,12 +1915,20 @@ class MCanvas3D(gl.GLViewWidget):
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        self._handle_hover_tooltip(event.pos().x(), event.pos().y())
         if self.is_selecting:
             self.drag_current = event.pos()
+            if self.is_selecting:
+                self.drag_current = event.pos()
+                self.update()
+                return
             self.update()
             return
 
-        if event.buttons() == Qt.MouseButton.MiddleButton:
+        is_middle_pan = (event.buttons() == Qt.MouseButton.MiddleButton)
+        is_tool_pan = (event.buttons() == Qt.MouseButton.LeftButton and getattr(self, 'single_use_pan_active', False))
+
+        if is_middle_pan or is_tool_pan:
             if hasattr(self, '_prev_mouse_pos'):
                 dx = event.pos().x() - self._prev_mouse_pos.x()
                 dy = event.pos().y() - self._prev_mouse_pos.y()
@@ -1884,6 +1938,9 @@ class MCanvas3D(gl.GLViewWidget):
                 else:
                     self.camera.pan(dx, dy, self.width(), self.height())
             self._prev_mouse_pos = event.pos()
+            
+            if is_tool_pan:
+                return
 
         elif event.buttons() == Qt.MouseButton.LeftButton:
             self.show_pivot_dot(True)
@@ -1910,17 +1967,29 @@ class MCanvas3D(gl.GLViewWidget):
         self.camera.zoom(delta, pos.x(), pos.y(), self.width(), self.height())
         
     def mouseReleaseEvent(self, event):
+                                           
+        if event.button() == Qt.MouseButton.LeftButton and getattr(self, 'single_use_pan_active', False):
+            self.single_use_pan_active = False
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            
+            main_window = self.window()
+            if hasattr(main_window, 'btn_pan'):
+                main_window.btn_pan.setChecked(False)
+            if hasattr(main_window, 'status'):
+                main_window.status.showMessage("Ready")
+                
+            super().mouseReleaseEvent(event)
+            return
+                                           
         if self.is_selecting and event.button() == Qt.MouseButton.LeftButton:
             self.is_selecting = False
             self.update() 
             
             if self.drag_start:
-                                          
                 drag_dist = (event.pos() - self.drag_start).manhattanLength()
                 
                 if drag_dist > 5: 
                     self.process_box_selection(self.drag_start, event.pos())
-                
                 else:
                     self.pick_single_object(event.pos())
 
@@ -1928,7 +1997,7 @@ class MCanvas3D(gl.GLViewWidget):
             self.drag_current = None
             
         super().mouseReleaseEvent(event)
-
+        
     def pick_single_object(self, pos):
         """Simulates a tiny box selection around the cursor to pick one object."""
                                                               
@@ -2016,9 +2085,32 @@ class MCanvas3D(gl.GLViewWidget):
                 
                 painter.setPen(text_color)
                 painter.drawText(text_x, text_y, text)
-        
-        painter.end()
 
+        if getattr(self, 'current_hover_data', None):
+            hx = self.current_hover_data['x'] + 15
+            hy = self.current_hover_data['y'] + 15
+            text = self.current_hover_data['text']
+            
+            font = painter.font()
+            font.setFamily("Consolas")
+            font.setPixelSize(11) 
+            font.setBold(False)
+            painter.setFont(font)
+            
+            metrics = painter.fontMetrics()
+            rect = metrics.boundingRect(0, 0, 400, 400, Qt.TextFlag.TextExpandTabs | Qt.AlignmentFlag.AlignLeft, text)
+            
+            bg_rect = QRect(int(hx), int(hy), rect.width() + 12, rect.height() + 10)
+            painter.fillRect(bg_rect, QColor(40, 40, 40, 200))
+            painter.setPen(QColor(80, 80, 80, 200))                     
+            painter.drawRect(bg_rect)
+            
+            painter.setPen(QColor(220, 220, 220)) 
+            text_rect = QRect(int(hx) + 6, int(hy) + 5, rect.width(), rect.height())
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft, text)
+            
+        painter.end()
+            
     def process_box_selection(self, p_start, p_end):
         if not self.current_model: return
         
@@ -2761,3 +2853,97 @@ class MCanvas3D(gl.GLViewWidget):
         """
         self._accel_overlay_pixmap = None
         self._accel_overlay_size   = (0, 0)
+
+    def _handle_hover_tooltip(self, px, py):
+        if not self.current_model:
+            self.current_hover_data = None
+            self.update()
+            return
+
+        w, h = self.width(), self.height()
+        full_area = (0, 0, w, h)
+        m_view = self.viewMatrix()
+        m_proj = self.projectionMatrix(region=full_area, viewport=full_area)
+        mvp = np.array((m_proj * m_view).data()).reshape(4, 4).T
+
+        hovered_node = None
+        hovered_elem = None
+        min_dist = 15.0
+
+        node_screens = {}
+        for nid, node in self.current_model.nodes.items():
+            if self._get_visibility_state(node.x, node.y, node.z) != 2: continue
+            s_pos = self._project_to_screen(node.x, node.y, node.z, mvp, w, h)
+            if s_pos:
+                node_screens[nid] = s_pos
+                dist = ((s_pos[0] - px)**2 + (s_pos[1] - py)**2)**0.5
+                if dist < min_dist:
+                    min_dist = dist
+                    hovered_node = nid
+
+        if hovered_node is None:
+            min_dist_edge = 10.0
+            for eid, el in self.current_model.elements.items():
+                if el.node_i.id in node_screens and el.node_j.id in node_screens:
+                    x1, y1 = node_screens[el.node_i.id]
+                    x2, y2 = node_screens[el.node_j.id]
+                    l2 = (x2 - x1)**2 + (y2 - y1)**2
+                    if l2 == 0:
+                        dist = ((px - x1)**2 + (py - y1)**2)**0.5
+                    else:
+                        t = max(0, min(1, ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2))
+                        proj_x = x1 + t * (x2 - x1)
+                        proj_y = y1 + t * (y2 - y1)
+                        dist = ((px - proj_x)**2 + (py - proj_y)**2)**0.5
+                    if dist < min_dist_edge:
+                        min_dist_edge = dist
+                        hovered_elem = eid
+
+        text = ""
+        in_analysis = getattr(self.current_model, 'has_results', False)
+        
+        if hovered_node is not None:
+            if in_analysis:
+                results = self.current_model.results.get("displacements", {})
+                vector = results.get(str(hovered_node), [0.0]*6)
+                from core.units import unit_registry
+                ux = unit_registry.to_display_length(vector[0])
+                uy = unit_registry.to_display_length(vector[1])
+                uz = unit_registry.to_display_length(vector[2])
+                u_str = unit_registry.length_unit_name
+                text = f"JOINT {hovered_node}\nUx: {ux:.4f} {u_str}\nUy: {uy:.4f} {u_str}\nUz: {uz:.4f} {u_str}"
+            else:
+                node = self.current_model.nodes[hovered_node]
+                text = f"JOINT {hovered_node}\nX: {node.x:.2f}\nY: {node.y:.2f}\nZ: {node.z:.2f}"
+            
+                if hasattr(node, 'restraints') and any(node.restraints):
+                    r = node.restraints
+                    
+                    is_fixed = all(r[:3]) and all(r[3:])
+                    is_pinned = all(r[:3]) and not any(r[3:])
+                    is_roller = r[2] and not any(r[0:2]) and not any(r[3:])
+                    
+                    if is_fixed: s_type = "Fixed"
+                    elif is_pinned: s_type = "Pinned"
+                    elif is_roller: s_type = "Roller"
+                    else: s_type = "Custom"
+                    
+                    dof_names = ["UX", "UY", "UZ", "RX", "RY", "RZ"]
+                    active_dofs = [dof_names[i] for i, state in enumerate(r) if state]
+                    
+                    text += f"\nSupport: {s_type}\nRestraints: [{', '.join(active_dofs)}]"
+
+        elif hovered_elem is not None:
+            el = self.current_model.elements[hovered_elem]
+            sec_name = el.section.name if el.section else "None"
+            text = f"FRAME {hovered_elem}\nSection: {sec_name}"
+
+        if text:
+            self.current_hover_data = {'text': text, 'x': px, 'y': py}
+        else:
+            self.current_hover_data = None
+
+        self.hovered_node_id = hovered_node
+        self.hovered_elem_id = hovered_elem
+            
+        self.update()                                          

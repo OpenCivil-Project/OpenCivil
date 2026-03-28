@@ -81,27 +81,37 @@ class NodeResultsDialog(QDialog):
         self.combo_cases.blockSignals(True)
         self.combo_cases.clear()
         
-        if "displacements" in self.results and self.results["displacements"]:
+        info_type = self.results.get("info", {}).get("type", "")
+        is_eigenvalue_run = info_type in ["Modal Analysis", "Buckling Analysis"]
+        
+        if "displacements" in self.results and self.results["displacements"] and not is_eigenvalue_run:
             display_name = "Analysis Result"
             if "rsa_info" in self.results:
                 method = self.results["rsa_info"].get("method", "SRSS")
-                display_name = f"RSA Final Result ({method})"
-            elif self.results.get("info", {}).get("type") == "Linear Static":
-                display_name = "Linear Static"
-            elif self.results.get("info", {}).get("type") == "Linear Time History Analysis":
+                display_name = f"RSA Final Envelope ({method})"
+            elif info_type == "Linear Static":
+                display_name = "Linear Static Displacements"
+            elif info_type == "Linear Time History Analysis":
                 display_name = "LTHA Peak Envelope"
             
             self.combo_cases.addItem(display_name, "MAIN_RESULT")
 
-            if self.results.get("info", {}).get("type") == "Linear Time History Analysis":
+            if info_type == "Linear Time History Analysis":
                 self.combo_cases.addItem("LTHA Live Playback", "LTHA_LIVE")
 
         if "mode_shapes" in self.results:
-            periods = self.results.get("tables", {}).get("periods", [])
-            for row in periods:
-                mode_num = row['mode']
-                T = row['T']
-                self.combo_cases.addItem(f"Mode {mode_num} (T={T:.4f}s)", f"Mode {mode_num}")
+            if info_type == "Buckling Analysis":
+                factors = self.results.get("tables", {}).get("buckling_factors", [])
+                for row in factors:
+                    mode_num = row['mode']
+                    lam = row['lambda']
+                    self.combo_cases.addItem(f"Mode {mode_num} (λ = {lam:.4f})", f"Mode {mode_num}")
+            else:
+                periods = self.results.get("tables", {}).get("periods", [])
+                for row in periods:
+                    mode_num = row['mode']
+                    T = row['T']
+                    self.combo_cases.addItem(f"Mode {mode_num} (T={T:.4f}s)", f"Mode {mode_num}")
 
         self.combo_cases.blockSignals(False)
         
@@ -131,7 +141,13 @@ class NodeResultsDialog(QDialog):
             shapes = self.results.get("mode_shapes", {})
             mode_data = shapes.get(key, {})
             vector = mode_data.get(self.node_id, [0.0]*6)
-            self.lbl_info.setText("Displaying Normalized Mode Shape.")
+            
+            info_type = self.results.get("info", {}).get("type", "")
+            if info_type == "Buckling Analysis":
+                self.lbl_info.setText("Displaying Buckling Mode Shape.")
+            else:
+                self.lbl_info.setText("Displaying Normalized Mode Shape.")
+                
             self.signal_mode_changed.emit(key)
             
         self._update_labels(vector)
