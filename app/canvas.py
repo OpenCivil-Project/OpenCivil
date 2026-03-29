@@ -241,6 +241,8 @@ class MCanvas3D(gl.GLViewWidget):
         self.node_items.clear()     
         self.element_items.clear()
 
+        if hasattr(self, 'load_items'): self.load_items.clear()
+
         self.invalidate_deflection_cache()
 
         for item in self.items[:]:
@@ -288,14 +290,32 @@ class MCanvas3D(gl.GLViewWidget):
         """Fast-path selection update. Skips full geometry rebuild."""
         self.selected_element_ids = list(sel_elems) if sel_elems is not None else []
         self.selected_node_ids = list(sel_nodes) if sel_nodes is not None else []
+        
+        # 1. Clear yellow selection highlight
         for item in self._sel_overlay_items:
             try:
                 self.removeItem(item)
             except Exception:
                 pass
         self._sel_overlay_items = []
+
+        # 2. NEW: Clear old loads to prepare for selected state
+        if not hasattr(self, 'load_items'): self.load_items = []
+        for item in self.load_items:
+            try: self.removeItem(item)
+            except Exception: pass
+        self.load_items.clear()
+        self.load_labels.clear()
+
+        # 3. Rebuild overlays and loads dynamically
         if self.current_model:
             self._rebuild_selection_overlay()
+            
+            in_analysis_mode = hasattr(self.current_model, 'has_results') and self.current_model.has_results
+            if self.show_loads and not in_analysis_mode:
+                self._draw_loads(self.current_model)
+                self._draw_member_loads(self.current_model)
+                self._draw_member_point_loads(self.current_model)
 
     def _rebuild_selection_overlay(self):
         """Dispatches to wireframe or extruded overlay builder, then nodes."""
@@ -309,7 +329,7 @@ class MCanvas3D(gl.GLViewWidget):
         if not self.selected_element_ids or not self.current_model:
             return
         model = self.current_model
-        sel_color = np.array([1.0, 0.0, 0.0, 1.0])
+        sel_color = np.array([1.0, 1.0, 0.0, 1.0])
         width = self.display_config.get("line_width", 2.0)
 
         can_deflect = (self.view_deflected and
@@ -327,7 +347,24 @@ class MCanvas3D(gl.GLViewWidget):
                 n1, n2 = el.node_i, el.node_j
                 p1 = np.array([n1.x, n1.y, n1.z])
                 p2 = np.array([n2.x, n2.y, n2.z])
-                if eid in self.deflection_cache:
+                
+                res_i = model.results.get("displacements", {}).get(str(n1.id))
+                res_j = model.results.get("displacements", {}).get(str(n2.id))
+                
+                if res_i and res_j:
+                    if eid not in self.deflection_cache:
+                        v1_orig, v2_orig, v3_orig = self._get_consistent_axes(el)
+                        curve_data = get_deflected_shape(
+                            [n1.x, n1.y, n1.z], [n2.x, n2.y, n2.z],
+                            res_i, res_j, v1_orig, v2_orig, v3_orig,
+                            scale=self.deflection_scale, num_points=11
+                        )
+                        self.deflection_cache[eid] = {
+                            'curve_data': curve_data,
+                            'p1_orig': p1.copy(),
+                            'p2_orig': p2.copy()
+                        }
+                    
                     cached = self.deflection_cache[eid]
                     curve_data_full = cached['curve_data']
                     p1_orig = cached['p1_orig']
@@ -344,26 +381,26 @@ class MCanvas3D(gl.GLViewWidget):
                         curved_pos.extend([p_start, p_end])
                         curved_colors.extend([sel_color, sel_color])
                 else:
-                                                           
-                    res_i = model.results.get("displacements", {}).get(str(n1.id))
-                    res_j = model.results.get("displacements", {}).get(str(n2.id))
-                    if res_i:
-                        p1 = p1 + np.array(res_i[:3]) * self.deflection_scale * self.anim_factor
-                    if res_j:
-                        p2 = p2 + np.array(res_j[:3]) * self.deflection_scale * self.anim_factor
                     curved_pos.extend([p1, p2])
                     curved_colors.extend([sel_color, sel_color])
+                    
             if curved_pos:
                 item = gl.GLLinePlotItem(
                     pos=np.array(curved_pos), color=np.array(curved_colors),
                     mode='lines', width=width + 2, antialias=True
                 )
-                item.setGLOptions('translucent')
+                item.setGLOptions({
+                    'glEnable': (GL_BLEND,),
+                    'glBlendFunc': (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA),
+                    'glDisable': (GL_DEPTH_TEST,)
+                })
                 self.addItem(item)
                 self._sel_overlay_items.append(item)
             return
 
         sel_pos = []
+        sel_colors = [] 
+
         for eid in self.selected_element_ids:
             if eid not in model.elements:
                 continue
@@ -385,13 +422,21 @@ class MCanvas3D(gl.GLViewWidget):
                 else:
                     p1_flex = p1 + (u * off_i)
                     p2_flex = p2 - (u * off_j)
+            
             sel_pos.extend([p1_flex, p2_flex])
+            sel_colors.extend([sel_color, sel_color]) 
+            
         if sel_pos:
             item = gl.GLLinePlotItem(
-                pos=np.array(sel_pos), color=sel_color,
+                pos=np.array(sel_pos), 
+                color=np.array(sel_colors), 
                 mode='lines', width=width + 1, antialias=True
             )
-            item.setGLOptions('opaque')
+            item.setGLOptions({
+                'glEnable': (GL_BLEND,),
+                'glBlendFunc': (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA),
+                'glDisable': (GL_DEPTH_TEST,)
+            })
             self.addItem(item)
             self._sel_overlay_items.append(item)
     def _rebuild_extruded_selection_overlay(self):
@@ -416,11 +461,29 @@ class MCanvas3D(gl.GLViewWidget):
             p2 = np.array([n2.x, n2.y, n2.z])
 
             if can_deflect:
-                if eid in self.deflection_cache:
+                res_i = model.results.get("displacements", {}).get(str(n1.id))
+                res_j = model.results.get("displacements", {}).get(str(n2.id))
+                
+                if res_i and res_j:
+
+                    if eid not in self.deflection_cache:
+                        v1_orig, v2_orig, v3_orig = self._get_consistent_axes(el)
+                        curve_data = get_deflected_shape(
+                            [n1.x, n1.y, n1.z], [n2.x, n2.y, n2.z],
+                            res_i, res_j, v1_orig, v2_orig, v3_orig,
+                            scale=self.deflection_scale, num_points=11
+                        )
+                        self.deflection_cache[eid] = {
+                            'curve_data': curve_data,
+                            'p1_orig': p1.copy(),
+                            'p2_orig': p2.copy()
+                        }
+                        
                     cached = self.deflection_cache[eid]
                     curve_data_full = cached['curve_data']
                     p1_orig = cached['p1_orig']
                     p2_orig = cached['p2_orig']
+                    
                     for k in range(len(curve_data_full) - 1):
                         pos_full, _, _ = curve_data_full[k]
                         pos_full_next, _, _ = curve_data_full[k + 1]
@@ -432,7 +495,7 @@ class MCanvas3D(gl.GLViewWidget):
                         p_end = pos_orig_next + (pos_full_next - pos_orig_next) * self.anim_factor
                         lines.extend([p_start, p_end])
                         colors.extend([color_sel, color_sel])
-                    continue                                      
+                    continue                                    
                                                   
                 res_i = model.results.get("displacements", {}).get(str(n1.id))
                 res_j = model.results.get("displacements", {}).get(str(n2.id))
@@ -449,7 +512,12 @@ class MCanvas3D(gl.GLViewWidget):
                 pos=np.array(lines), color=np.array(colors),
                 mode='lines', width=5.0, antialias=True
             )
-            cl.setGLOptions('translucent')
+            cl.setGLOptions({
+                'glEnable': (GL_BLEND,),
+                'glBlendFunc': (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA),
+                'glDisable': (GL_DEPTH_TEST,)
+            })
+            
             self.addItem(cl)
             self._sel_overlay_items.append(cl)
 
@@ -1316,9 +1384,9 @@ class MCanvas3D(gl.GLViewWidget):
                     d = axis_vec * (1 if val > 0 else -1)
                     add_arrow(origin, d, color, is_moment)
                     
-                    if is_selected:
-                        l_type = "Moment" if is_moment else "Force"
-                        self._add_load_label(origin, d, val, l_type, color)
+                    # Remove 'if is_selected:' and unconditionally add the label
+                    l_type = "Moment" if is_moment else "Force"
+                    self._add_load_label(origin, d, val, l_type, color, owner_id=node.id, owner_type='node')
 
             c_black = (0, 0, 0, 1)
 
@@ -1331,13 +1399,16 @@ class MCanvas3D(gl.GLViewWidget):
             process_component(load.my, np.array([0, 1.0, 0]), c_black, True)
 
         if arrow_lines:
-            self.addItem(gl.GLLinePlotItem(
+            item = gl.GLLinePlotItem(
                 pos=np.array(arrow_lines), 
                 color=np.array(arrow_colors), 
-                mode='lines', width=2, antialias=True
-            ))
+                mode='lines', width=2.0, antialias=True
+            )
+            self.addItem(item)
+            if not hasattr(self, 'load_items'): self.load_items = []
+            self.load_items.append(item)
 
-    def _add_load_label(self, origin, direction, val, l_type, color):
+    def _add_load_label(self, origin, direction, val, l_type, color, owner_id=None, owner_type=None):
         if l_type == "Moment":
             m_scale = unit_registry.force_scale * unit_registry.length_scale
             display_val = abs(val) * m_scale
@@ -1348,6 +1419,8 @@ class MCanvas3D(gl.GLViewWidget):
             
         label_pos = origin - (direction * 2.2)
         self.load_labels.append({
+            'owner_id': owner_id,
+            'owner_type': owner_type,
             'pos_3d': label_pos,
             'text': f"{display_val:.2f} {unit_str}",
             'color': color
@@ -2260,6 +2333,15 @@ class MCanvas3D(gl.GLViewWidget):
             font = painter.font()
             
             for label in self.load_labels:
+
+                o_id = label.get('owner_id')
+                o_type = label.get('owner_type')
+                
+                if o_type == 'node' and o_id not in self.selected_node_ids:
+                    continue
+                if o_type == 'element' and o_id not in self.selected_element_ids:
+                    continue
+
                 pos_3d = label['pos_3d']
                 
                 vec = np.array([pos_3d[0], pos_3d[1], pos_3d[2], 1.0])
@@ -2423,9 +2505,9 @@ class MCanvas3D(gl.GLViewWidget):
 
     def _draw_member_loads(self, model):
         """
-        Visualizes Distributed Loads (Ghost Fill Style).
-        - Unselected: Faint colored curtain ONLY.
-        - Selected: Full detail + Text with Units.
+        Visualizes Distributed Loads (Professional UX).
+        - Unselected: Faint colored curtain ONLY (no arrows, no text). Keeps scene clean.
+        - Selected: Darker curtain, Outline, 5 distinct arrows, and Text Label.
         """
         if not model.loads: return
         if not self.show_loads: return
@@ -2437,20 +2519,10 @@ class MCanvas3D(gl.GLViewWidget):
 
         ghost_verts = []; ghost_colors = []; ghost_faces = []
         ghost_idx_counter = 0
-
-        scale = 0.75
-      
-        c_grav_ghost = (0, 0, 0, 0.2)
-        c_local_ghost = (0, 0, 0, 0.2)
-        c_other_ghost = (0, 0, 0, 0.2)
-
-        c_grav_sel_fill = (0, 0, 0, 0.4); c_grav_line = (0, 0, 0, 1.0)
-        c_local_sel_fill = (0, 0, 0, 0.4); c_local_line = (0, 0, 0, 1.0)
-        c_other_sel_fill = (0, 0, 0, 0.4); c_other_line = (0, 0, 0, 1.0)
+        ghost_lines = []; ghost_line_colors = []
 
         for load in model.loads:
-            if not hasattr(load, 'wx'): continue
-            if not hasattr(load, 'element_id'): continue
+            if not hasattr(load, 'wx') or not hasattr(load, 'element_id'): continue
             if self.visible_load_patterns and load.pattern_name not in self.visible_load_patterns:
                 continue
             
@@ -2477,130 +2549,128 @@ class MCanvas3D(gl.GLViewWidget):
                 val = raw_w[axis_idx]
                 if abs(val) < 1e-6: continue
 
-                base_height = 0.5
-                growth_factor = 0.2
-                
+                # Calculate Visual Scale
                 magnitude = max(1.0, abs(val))
-                
-                scale = base_height + (np.log10(magnitude) * growth_factor)
-                
-                if scale > 1.5: scale = 1.5 
-
+                scale = min(1.5, 0.5 + (np.log10(magnitude) * 0.2))
                 sign = 1 if val > 0 else -1
                 
+                # --- COLOR PALETTE ---
                 if load.coord_system == "Local":
-                    if axis_idx == 0: load_vec = v1_ax 
-                    elif axis_idx == 1: load_vec = v2_ax
-                    elif axis_idx == 2: load_vec = v3_ax
-                    c_fill_sel, c_line, c_ghost = c_local_sel_fill, c_local_line, c_local_ghost
+                    load_vec = [v1_ax, v2_ax, v3_ax][axis_idx]
+                    base_rgb = (0.1, 0.1, 0.1) # Black/Dark Grey for Local
                 else:         
                     load_vec = np.zeros(3); load_vec[axis_idx] = 1.0  
                     if axis_idx == 2 and sign < 0:
-                        c_fill_sel, c_line, c_ghost = c_grav_sel_fill, c_grav_line, c_grav_ghost
+                        base_rgb = (0.2, 0.5, 0.9) # Blue for Gravity
                     else:
-                        c_fill_sel, c_line, c_ghost = c_other_sel_fill, c_other_line, c_other_ghost
+                        base_rgb = (0.4, 0.4, 0.4)
+                
+                c_ghost      = (*base_rgb, 0.15) # Very faint background curtain
+                c_ghost_line = (*base_rgb, 0.30) # Faint top edge
+                c_sel_fill   = (*base_rgb, 0.40) # Darker curtain when selected
+                c_line       = (*base_rgb, 1.00) # Solid vivid arrows when selected
 
+                # Vector Math for Coordinates
                 offset_vec = -1 * sign * load_vec * scale 
                 cross_prod = np.cross(beam_dir, load_vec)
                 is_parallel = np.linalg.norm(cross_prod) < 0.01
-                visual_shift = np.zeros(3)
-                if is_parallel: visual_shift = v2_ax * 0.5 
+                visual_shift = v2_ax * 0.5 if is_parallel else np.zeros(3)
 
                 pt_base_1 = p1 + visual_shift
                 pt_base_2 = p2 + visual_shift
                 pt_top_1  = p1 + offset_vec + visual_shift
                 pt_top_2  = p2 + offset_vec + visual_shift
 
+                # =========================================================
+                # UNSELECTED STATE: Clean "Gist" 
+                # =========================================================
                 if not is_selected:
+                    # Faint Curtain
                     ghost_verts.extend([pt_base_1, pt_base_2, pt_top_2, pt_top_1])
                     idx = ghost_idx_counter
-                    ghost_faces.append([idx, idx+1, idx+2])
-                    ghost_faces.append([idx, idx+2, idx+3])
+                    ghost_faces.extend([[idx, idx+1, idx+2], [idx, idx+2, idx+3]])
                     for _ in range(4): ghost_colors.append(c_ghost)
                     ghost_idx_counter += 4
+                    
+                    # Faint Top Edge (Helps define the shape without clutter)
+                    ghost_lines.extend([pt_top_1, pt_top_2])
+                    ghost_line_colors.extend([c_ghost_line, c_ghost_line])
                     continue 
 
+                # =========================================================
+                # SELECTED STATE: Full Detail (Text, Arrows, Outlines)
+                # =========================================================
+                display_val = val * unit_registry.force_scale / unit_registry.length_scale
+                mid_height = (pt_top_1 + pt_top_2) / 2
+                self.load_labels.append({
+                    'owner_id': el.id, 'owner_type': 'element',
+                    'pos_3d': mid_height.tolist(),                               
+                    'text': f"{display_val:.2f} {unit_registry.distributed_load_unit}",  
+                    'color': c_line                                         
+                })
+
+                # Darker Curtain
                 sel_verts.extend([pt_base_1, pt_base_2, pt_top_2, pt_top_1])
                 idx = sel_idx_counter
-                sel_faces.append([idx, idx+1, idx+2])
-                sel_faces.append([idx, idx+2, idx+3])
-                for _ in range(4): sel_colors.append(c_fill_sel)
+                sel_faces.extend([[idx, idx+1, idx+2], [idx, idx+2, idx+3]])
+                for _ in range(4): sel_colors.append(c_sel_fill)
                 sel_idx_counter += 4
 
+                # Full Outline
                 sel_lines.extend([pt_top_1, pt_top_2, pt_top_1, pt_base_1, pt_top_2, pt_base_2])
-                for _ in range(6): sel_line_colors.append(c_line)
+                sel_line_colors.extend([c_line] * 6)
 
-                if is_parallel: spread_vec = np.cross(beam_dir, visual_shift)
-                else: spread_vec = cross_prod
-                if np.linalg.norm(spread_vec) > 0:
-                    spread_vec = (spread_vec / np.linalg.norm(spread_vec)) * 0.2
-                else: spread_vec = np.array([0.2, 0, 0])
+                # Draw 5 distinctly spaced arrows
+                num_arrows = 5
+                arrow_dir = -sign * load_vec 
+                arrow_len = scale * 0.9
 
-                def draw_arrow(tip_pos, direction, color):
-                    arrow_length = 1.2
-                    head_size = 0.45
-                    tail = tip_pos + direction * arrow_length
+                def add_arrow(tip_pos, direction, color):
+                    head_size = arrow_len * 0.3
+                    tail = tip_pos + direction * arrow_len
                     sel_lines.extend([tail, tip_pos])
                     sel_line_colors.extend([color, color])
                     
-                    if abs(direction[2]) > 0.9:
-                        perp = np.array([1.0, 0.0, 0.0])
-                    else:
-                        perp = np.array([0.0, 0.0, 1.0])
-                    
+                    perp = np.array([1.0, 0.0, 0.0]) if abs(direction[2]) > 0.9 else np.array([0.0, 0.0, 1.0])
                     side_vec = np.cross(direction, perp)
                     side_vec = (side_vec / np.linalg.norm(side_vec)) * head_size
                     
                     base = tip_pos + direction * head_size
-                    sel_lines.extend([tip_pos, base + side_vec])
-                    sel_lines.extend([tip_pos, base - side_vec])
-                    sel_line_colors.extend([color, color, color, color])
+                    sel_lines.extend([tip_pos, base + side_vec, tip_pos, base - side_vec])
+                    sel_line_colors.extend([color] * 4)
 
-                arrow_dir = -sign * load_vec 
+                for i in range(num_arrows):
+                    t = i / (num_arrows - 1)
+                    pt_tip = pt_base_1 + t * (pt_base_2 - pt_base_1)
+                    add_arrow(pt_tip, arrow_dir, c_line)
 
-                pt_mid = (pt_base_1 + pt_base_2) / 2
-                draw_arrow(pt_mid, arrow_dir, c_line)
-
-                draw_arrow(pt_base_1, arrow_dir, c_line)
-                draw_arrow(pt_base_2, arrow_dir, c_line)
-
-                display_val = val * unit_registry.force_scale / unit_registry.length_scale
-                unit_str = unit_registry.distributed_load_unit
-                mid_height = (pt_top_1 + pt_top_2) / 2
-                
-                self.load_labels.append({
-                    'pos_3d': mid_height.tolist(),                               
-                    'text': f"{display_val:.2f} {unit_str}",  
-                    'color': c_line                                         
-                })
-
+        # --- OpenGL Drawing Blocks ---
         if ghost_verts:
             mesh_ghost = gl.GLMeshItem(
-                vertexes=np.array(ghost_verts, dtype=np.float32),
-                faces=np.array(ghost_faces, dtype=np.int32),
-                vertexColors=np.array(ghost_colors, dtype=np.float32),
-                smooth=False, shader='balloon', glOptions='translucent'
+                vertexes=np.array(ghost_verts, dtype=np.float32), faces=np.array(ghost_faces, dtype=np.int32),
+                vertexColors=np.array(ghost_colors, dtype=np.float32), smooth=False, shader='balloon', glOptions='translucent'
             )
             self.addItem(mesh_ghost)
-            self.element_items.append(mesh_ghost)
+            self.load_items.append(mesh_ghost)
+
+        if ghost_lines:
+            g_lines = gl.GLLinePlotItem(pos=np.array(ghost_lines), color=np.array(ghost_line_colors), mode='lines', width=1.0, antialias=True)
+            g_lines.setGLOptions('translucent')
+            self.addItem(g_lines)
+            self.load_items.append(g_lines)
 
         if sel_verts:
             mesh_sel = gl.GLMeshItem(
-                vertexes=np.array(sel_verts, dtype=np.float32),
-                faces=np.array(sel_faces, dtype=np.int32),
-                vertexColors=np.array(sel_colors, dtype=np.float32),
-                smooth=False, shader='balloon', glOptions='translucent'
+                vertexes=np.array(sel_verts, dtype=np.float32), faces=np.array(sel_faces, dtype=np.int32),
+                vertexColors=np.array(sel_colors, dtype=np.float32), smooth=False, shader='balloon', glOptions='translucent'
             )
             self.addItem(mesh_sel)
-            self.element_items.append(mesh_sel) 
+            self.load_items.append(mesh_sel)
 
         if sel_lines:
-            lines = gl.GLLinePlotItem(
-                pos=np.array(sel_lines), color=np.array(sel_line_colors), 
-                mode='lines', width=2, antialias=True
-            )
+            lines = gl.GLLinePlotItem(pos=np.array(sel_lines), color=np.array(sel_line_colors), mode='lines', width=2, antialias=True)
             self.addItem(lines)
-            self.element_items.append(lines)
+            self.load_items.append(lines)
 
     def _draw_local_axes(self, model):
         """Draws RGB arrows at the center of each element representing local axes."""
@@ -2773,8 +2843,11 @@ class MCanvas3D(gl.GLViewWidget):
             if is_moment:
                 add_head(tip - (draw_dir * (H * 0.8)))
 
-            if is_selected:
-                self._add_load_label(load_pos, draw_dir, val, "Moment" if is_moment else "Force", c)
+            add_head(tip)
+            if is_moment:
+                add_head(tip - (draw_dir * (H * 0.8)))
+
+            self._add_load_label(load_pos, draw_dir, val, "Moment" if is_moment else "Force", c, owner_id=el.id, owner_type='element')
 
         if arrow_lines:
             self.addItem(gl.GLLinePlotItem(
