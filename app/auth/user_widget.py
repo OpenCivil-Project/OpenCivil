@@ -29,7 +29,7 @@ ACCENT         = "#0F62FE"
 DANGER         = "#DC2626"
 DANGER_HOVER   = "rgba(220,38,38,8)"
 HOVER_ITEM     = "rgba(15,28,46,6)"
-AVATAR_SIZE    = 32
+AVATAR_SIZE    = 36
 DROPDOWN_W     = 300
 
 class AvatarFetcher(QThread):
@@ -249,10 +249,8 @@ class UserProfileWidget(QWidget):
         self._apply_shadow()
         self._start_avatar_fetch()
 
-        if parent:
-            parent.installEventFilter(self)
-            self.reposition()
-            self.raise_()
+        from PyQt6.QtWidgets import QApplication
+        QApplication.instance().installEventFilter(self)
 
     def _build_ui(self):
         self.setStyleSheet("""
@@ -277,8 +275,12 @@ class UserProfileWidget(QWidget):
         layout.addWidget(self.avatar)
 
         first_name = name.split()[0] if name else "User"
+        if len(first_name) > 10:
+            first_name = first_name[:9] + "…"
+
         self.lbl_name = QLabel(first_name)
-        self.lbl_name.setFont(QFont("Segoe UI Semibold", 9))
+        self.lbl_name = QLabel(first_name)
+        self.lbl_name.setFont(QFont("Segoe UI Semibold",11))
         self.lbl_name.setStyleSheet(f"color: {TEXT_PRIMARY}; background: transparent;")
         layout.addWidget(self.lbl_name)
 
@@ -356,9 +358,25 @@ class UserProfileWidget(QWidget):
         self.logout_requested.emit()
 
     def eventFilter(self, obj, event):
-        from PyQt6.QtCore import QEvent
+        from PyQt6.QtCore import QEvent, QRect, QPoint
+
         if obj is self.parent() and event.type() in (
             QEvent.Type.Resize, QEvent.Type.Show
         ):
             self.reposition()
+
+        if self._dropdown and self._dropdown.isVisible():
+            if event.type() == QEvent.Type.MouseButtonPress:
+                gpos = event.globalPosition().toPoint()
+                dd_rect = QRect(self._dropdown.mapToGlobal(QPoint(0, 0)), self._dropdown.size())
+                my_rect = QRect(self.mapToGlobal(QPoint(0, 0)), self.size())
+                if not dd_rect.contains(gpos) and not my_rect.contains(gpos):
+                    self._dropdown.hide()
+                    self.lbl_chevron.setText("▾")
+
         return False
+    
+    def closeEvent(self, event):
+        from PyQt6.QtWidgets import QApplication
+        QApplication.instance().removeEventFilter(self)
+        super().closeEvent(event)

@@ -494,15 +494,22 @@ class MainWindow(QMainWindow):
         self.btn_opts.triggered.connect(self.on_view_options)
         self.toolbar.addAction(self.btn_opts)
 
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.toolbar.addWidget(spacer)
+        self.user_widget_action = None 
+
+        
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
+        self.toolbar.addSeparator()
 
         self.btn_cli = QAction(qta.icon('fa5s.terminal', color="#6c757d"), "Terminal", self)
         self.btn_cli.setToolTip("Toggle Terminal  (Ctrl+`)")
         self.btn_cli.setShortcut("Ctrl+`")
         self.btn_cli.triggered.connect(self._toggle_terminal)
         self.toolbar.addAction(self.btn_cli)
+
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.toolbar.addWidget(spacer)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -2368,6 +2375,7 @@ def main():
 
         def attach_user_widget():
             window.user_widget = UserProfileWidget(auth_manager, parent=window)
+            window.toolbar.addWidget(window.user_widget) 
             window.user_widget.reposition()
             window.user_widget.show()
             window.user_widget.raise_()
@@ -2425,6 +2433,8 @@ def main():
                     app.quit()
 
             window.user_widget.logout_requested.connect(on_logout)
+        
+        QTimer.singleShot(150, attach_user_widget)
 
         if len(sys.argv) > 1:
             file_path = sys.argv[1]
