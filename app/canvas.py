@@ -63,6 +63,10 @@ class MCanvas3D(gl.GLViewWidget):
         self.shadow_color = (0.7, 0.7, 0.7, 0.5)
         self.show_grid = True
 
+        self.current_hover_data = None
+        self.hovered_node_id = None
+        self.hovered_elem_id = None
+
         self.deflection_cache = {}
         self.cache_valid = False
         self.cache_scale_used = None  
@@ -89,7 +93,8 @@ class MCanvas3D(gl.GLViewWidget):
 
         self.static_items = []      
         self.node_items = []         
-        self.element_items = []      
+        self.element_items = []
+        self._sel_overlay_items = []      
         self.last_selection_state = {'nodes': [], 'elements': [], 'blink': True}
 
         self.active_view_plane = None 
@@ -97,6 +102,7 @@ class MCanvas3D(gl.GLViewWidget):
         self.drag_start = None
         self.drag_current = None
         self.is_selecting = False
+        self._is_navigating = False
 
         self.blink_state = True
                                     
@@ -109,6 +115,12 @@ class MCanvas3D(gl.GLViewWidget):
         self.pivot_timer = QTimer()
         self.pivot_timer.setSingleShot(True)
         self.pivot_timer.timeout.connect(lambda: self.pivot_dot.setVisible(False))
+
+        self._hover_timer = QTimer()
+        self._hover_timer.setSingleShot(True)
+        self._hover_timer.setInterval(80)
+        self._pending_hover_pos = (0, 0)
+        self._hover_timer.timeout.connect(lambda: self._handle_hover_tooltip(*self._pending_hover_pos))
 
         self.snap_ring = gl.GLLinePlotItem(pos=np.array([[0,0,0]]), mode='line_strip', 
                                            color=(1, 0, 0, 1), width=3, antialias=True)
@@ -252,15 +264,8 @@ class MCanvas3D(gl.GLViewWidget):
         in_analysis_mode = hasattr(model, 'has_results') and model.has_results
         
         if self.show_loads and not in_analysis_mode:
-            self._draw_loads(model)                      
-            self._draw_member_loads(model)                             
-            self._draw_member_point_loads(model)
-            
-        in_analysis_mode = hasattr(model, 'has_results') and model.has_results
-        
-        if self.show_loads and not in_analysis_mode:
-            self._draw_loads(model)                      
-            self._draw_member_loads(model)                             
+            self._draw_loads(model)
+            self._draw_member_loads(model)
             self._draw_member_point_loads(model)
 
         if self.show_slabs:
@@ -276,11 +281,116 @@ class MCanvas3D(gl.GLViewWidget):
         self.snap_ring.setGLOptions('translucent')
         self.snap_dot.setGLOptions('translucent')
 
+        self._sel_overlay_items = []
+        self._rebuild_selection_overlay()
+
+    def update_selection_overlay(self, sel_elems, sel_nodes):
+        """Fast-path selection update. Skips full geometry rebuild."""
+        self.selected_element_ids = list(sel_elems) if sel_elems is not None else []
+        self.selected_node_ids = list(sel_nodes) if sel_nodes is not None else []
+        for item in self._sel_overlay_items:
+            try:
+                self.removeItem(item)
+            except Exception:
+                pass
+        self._sel_overlay_items = []
+        if self.current_model:
+            self._rebuild_selection_overlay()
+
+    def _rebuild_selection_overlay(self):
+        """Dispatches to wireframe or extruded overlay builder, then nodes."""
+        if self.view_extruded:
+            self._rebuild_extruded_selection_overlay()
+        else:
+            self._rebuild_wireframe_selection_overlay()
+        self._rebuild_node_selection_overlay()
+
+    def _rebuild_wireframe_selection_overlay(self):
+        if not self.selected_element_ids or not self.current_model:
+            return
+        model = self.current_model
+        sel_color = np.array([1.0, 0.0, 0.0, 1.0])
+        width = self.display_config.get("line_width", 2.0)
+        sel_pos = []
+        for eid in self.selected_element_ids:
+            if eid not in model.elements:
+                continue
+            el = model.elements[eid]
+            n1, n2 = el.node_i, el.node_j
+            p1 = np.array([n1.x, n1.y, n1.z])
+            p2 = np.array([n2.x, n2.y, n2.z])
+            off_i = getattr(el, 'end_offset_i', 0.0)
+            off_j = getattr(el, 'end_offset_j', 0.0)
+            vec = p2 - p1
+            length = np.linalg.norm(vec)
+            p1_flex, p2_flex = p1, p2
+            if length > 0.001 and (off_i > 0 or off_j > 0):
+                u = vec / length
+                if off_i + off_j >= length:
+                    scale = (length / (off_i + off_j)) * 0.99
+                    p1_flex = p1 + (u * off_i * scale)
+                    p2_flex = p2 - (u * off_j * scale)
+                else:
+                    p1_flex = p1 + (u * off_i)
+                    p2_flex = p2 - (u * off_j)
+            sel_pos.extend([p1_flex, p2_flex])
+        if sel_pos:
+            item = gl.GLLinePlotItem(
+                pos=np.array(sel_pos), color=sel_color,
+                mode='lines', width=width + 1, antialias=True
+            )
+            item.setGLOptions('opaque')
+            self.addItem(item)
+            self._sel_overlay_items.append(item)
+
+    def _rebuild_extruded_selection_overlay(self):
+        if not self.selected_element_ids or not self.current_model:
+            return
+        model = self.current_model
+        color_sel = np.array([1.0, 1.0, 0.0, 1.0])
+        lines = []
+        colors = []
+        for eid in self.selected_element_ids:
+            if eid not in model.elements:
+                continue
+            el = model.elements[eid]
+            p1 = np.array([el.node_i.x, el.node_i.y, el.node_i.z])
+            p2 = np.array([el.node_j.x, el.node_j.y, el.node_j.z])
+            lines.extend([p1, p2])
+            colors.extend([color_sel, color_sel])
+        if lines:
+            cl = gl.GLLinePlotItem(
+                pos=np.array(lines), color=np.array(colors),
+                mode='lines', width=5.0, antialias=True
+            )
+            cl.setGLOptions('translucent')
+            self.addItem(cl)
+            self._sel_overlay_items.append(cl)
+
+    def _rebuild_node_selection_overlay(self):
+        if not self.selected_node_ids or not self.current_model:
+            return
+        model = self.current_model
+        size = self.display_config.get("node_size", 6)
+        sel_pos = []
+        for nid in self.selected_node_ids:
+            if nid not in model.nodes:
+                continue
+            n = model.nodes[nid]
+            sel_pos.append([n.x, n.y, n.z])
+        if sel_pos:
+            sp = gl.GLScatterPlotItem(
+                pos=np.array(sel_pos), size=size + 2,
+                color=(1, 0, 0, 1), pxMode=True
+            )
+            sp.setGLOptions('opaque')
+            self.addItem(sp)
+            self._sel_overlay_items.append(sp)
+
     def _draw_nodes(self, model):
         if not model.nodes: return
         
         pos_free = []
-        sel_pos = []
         ghost_pos = []
         supports_fixed = []; supports_pinned = []; supports_roller = []; supports_custom = []
 
@@ -316,10 +426,6 @@ class MCanvas3D(gl.GLViewWidget):
             if not is_active:
                 ghost_pos.append(xyz)
                 continue
-
-            is_sel = (nid in self.selected_node_ids)
-            if is_sel:
-                sel_pos.append(xyz)
             
             r = n.restraints
             is_fixed = all(r[:3]) and all(r[3:]) 
@@ -333,8 +439,8 @@ class MCanvas3D(gl.GLViewWidget):
                 elif is_pinned: supports_pinned.append(xyz)
                 elif is_roller: supports_roller.append(xyz)
                 else: supports_custom.append(xyz)
-            elif self.show_joints and not is_sel:
-                 pos_free.append(xyz)
+            elif self.show_joints:
+                pos_free.append(xyz)
 
         if pos_free: 
             item = gl.GLScatterPlotItem(
@@ -344,14 +450,6 @@ class MCanvas3D(gl.GLViewWidget):
                 pxMode=True)
             self.addItem(item)
             self.node_items.append(item)
-        
-        if sel_pos: 
-                                                                                 
-            sp = gl.GLScatterPlotItem(
-                pos=np.array(sel_pos), size=size+2, color=(1, 0, 0, 1), pxMode=True)
-            sp.setGLOptions('opaque')
-            self.addItem(sp)
-            self.node_items.append(sp)
 
         if supports_fixed: self._draw_support_meshes(supports_fixed, 'fixed')
         if supports_pinned: self._draw_support_meshes(supports_pinned, 'pinned')
@@ -389,7 +487,6 @@ class MCanvas3D(gl.GLViewWidget):
         release_dots = []
 
         ghost_pos = []
-        sel_color = np.array([1.0, 0.0, 0.0, 1.0]) 
         def_color = np.array([0.5, 0.5, 0.5, 1.0]) 
         width = self.display_config.get("line_width", 2.0)
 
@@ -409,12 +506,9 @@ class MCanvas3D(gl.GLViewWidget):
             p1 = np.array([n1.x, n1.y, n1.z])
             p2 = np.array([n2.x, n2.y, n2.z])
                              
-            if eid in self.selected_element_ids:
-                c = sel_color
-            else:
-                c = getattr(el.section, 'color', def_color)
-                if len(c) == 3: c = (*c, 1.0)
-                c = np.array(c)
+            c = getattr(el.section, 'color', def_color)
+            if len(c) == 3: c = (*c, 1.0)
+            c = np.array(c)
 
             drawn_as_curve = False
             
@@ -584,11 +678,7 @@ class MCanvas3D(gl.GLViewWidget):
         self.ex_colors = []
         self.ex_edges = []
         self.ex_edge_colors = []
-        
-        center_lines = []
-        center_colors = []
-        color_edge_select = np.array([1.0, 1.0, 0.0, 1.0])                
-        
+      
         opacity = self.display_config.get("extrude_opacity", 0.35)
         show_edges = self.display_config.get("show_edges", False)
         edge_c = np.array(self.display_config.get("edge_color", (0, 0, 0, 1)))
@@ -691,11 +781,6 @@ class MCanvas3D(gl.GLViewWidget):
                 path_points.append( (p1_draw, v2, v3) )
                 path_points.append( (p2_draw, v2, v3) )
 
-            if eid in self.selected_element_ids and len(path_points) >= 2:
-                for i in range(len(path_points) - 1):
-                    center_lines.extend([path_points[i][0], path_points[i+1][0]])
-                    center_colors.extend([color_edge_select, color_edge_select])
-
             y_shift, z_shift = el.get_cardinal_offsets()
             off_vec_i = getattr(el, 'joint_offset_i', np.array([0,0,0]))
             off_vec_j = getattr(el, 'joint_offset_j', np.array([0,0,0]))
@@ -730,14 +815,6 @@ class MCanvas3D(gl.GLViewWidget):
                     draw_end_ring=is_last_seg,
                     draw_caps=needs_caps
                 )
-
-        if center_lines:
-             cl = gl.GLLinePlotItem(
-                 pos=np.array(center_lines), color=np.array(center_colors),
-                 mode='lines', width=5.0, antialias=True
-             )
-             cl.setGLOptions('translucent')
-             self.addItem(cl)
 
         if self.ex_vertices:
             mesh = gl.GLMeshItem(
@@ -1930,14 +2007,30 @@ class MCanvas3D(gl.GLViewWidget):
             self.drag_start = event.pos()
             self.drag_current = event.pos()
             self.is_selecting = True
+            self._is_navigating = True
             self.update()
 
         elif event.button() == Qt.MouseButton.RightButton:
+            self._is_navigating = True
             self.signal_right_clicked.emit()
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        self._handle_hover_tooltip(event.pos().x(), event.pos().y())
+        buttons = event.buttons()
+        is_middle_pan = (buttons == Qt.MouseButton.MiddleButton)
+        is_tool_pan   = (buttons == Qt.MouseButton.LeftButton and getattr(self, 'single_use_pan_active', False))
+        is_rotating   = (buttons == Qt.MouseButton.LeftButton and not self.is_selecting and not getattr(self, 'single_use_pan_active', False))
+
+        self._is_navigating = is_middle_pan or is_tool_pan or is_rotating or self.is_selecting
+
+        if not self._is_navigating:
+            self._pending_hover_pos = (event.pos().x(), event.pos().y())
+            if not self._hover_timer.isActive():
+                self._hover_timer.start()
+        else:
+            self._hover_timer.stop()
+            self.current_hover_data = None
+            self.update()
         if self.is_selecting:
             self.drag_current = event.pos()
             if self.is_selecting:
@@ -2005,6 +2098,7 @@ class MCanvas3D(gl.GLViewWidget):
                                            
         if self.is_selecting and event.button() == Qt.MouseButton.LeftButton:
             self.is_selecting = False
+            self._is_navigating = False
             self.update() 
             
             if self.drag_start:
@@ -2018,6 +2112,7 @@ class MCanvas3D(gl.GLViewWidget):
             self.drag_start = None
             self.drag_current = None
             
+        self._is_navigating = False
         super().mouseReleaseEvent(event)
         
     def pick_single_object(self, pos):

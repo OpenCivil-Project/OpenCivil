@@ -173,6 +173,19 @@ class MainWindow(QMainWindow):
             "edge_color": (0.0, 0.0, 0.0, 1.0),      
             "slab_opacity": 0.4
         }
+
+        import json as _json
+        _prefs_path = os.path.join(os.path.expanduser("~"), ".opencivil_prefs.json")
+        if os.path.exists(_prefs_path):
+            try:
+                with open(_prefs_path) as _f:
+                    _saved = _json.load(_f)
+                    for _k in ("background_color", "node_color", "edge_color"):
+                        if _k in _saved and isinstance(_saved[_k], list):
+                            _saved[_k] = tuple(_saved[_k])
+                    self.graphics_settings.update(_saved)
+            except Exception:
+                pass
         
         self.setWindowTitle("OPENCIVIL Analysis Engine")
         self.resize(1200, 800)
@@ -496,7 +509,6 @@ class MainWindow(QMainWindow):
 
         self.user_widget_action = None 
 
-        
         self.toolbar.addSeparator()
         self.toolbar.addSeparator()
         self.toolbar.addSeparator()
@@ -813,20 +825,8 @@ class MainWindow(QMainWindow):
                 self.model.file_path = filename
 
                 if self.model.graphics_settings:
-                                                                 
                     self.graphics_settings.update(self.model.graphics_settings)
-
-                    self.canvas.view_extruded = self.graphics_settings.get('view_extruded', False)
-                    self.canvas.show_slabs = self.graphics_settings.get('show_slabs', True)
-                    self.canvas.show_joints = self.graphics_settings.get('show_joints', True)
-                    self.canvas.show_supports = self.graphics_settings.get('show_supports', True)
-                    self.canvas.show_loads = self.graphics_settings.get('show_loads', True)
-                    self.canvas.show_local_axes = self.graphics_settings.get('show_local_axes', False)
-                    self.canvas.show_constraints = self.graphics_settings.get('show_constraints', True)
-                    self.canvas.show_releases = self.graphics_settings.get('show_releases', True)
-                    self.canvas.load_type_filter = self.graphics_settings.get('load_type_filter', 'both')
-                    self.canvas.visible_load_patterns = self.graphics_settings.get('visible_load_patterns', [])
-
+                    self._apply_canvas_view_settings(self.graphics_settings)
                     self.update_graphics_settings(self.graphics_settings)
 
                 if hasattr(self.model, 'saved_unit_system'):
@@ -1122,7 +1122,7 @@ class MainWindow(QMainWindow):
                     self.selected_node_ids = []
                     self.status.showMessage("Selection Cleared")
         
-        self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
+        self.canvas.update_selection_overlay(self.selected_ids, self.selected_node_ids)
 
         modifiers = QApplication.keyboardModifiers()
         is_focus_requested = (modifiers == Qt.KeyboardModifier.AltModifier)
@@ -1383,7 +1383,7 @@ class MainWindow(QMainWindow):
         prefs_path = os.path.join(os.path.expanduser("~"), ".opencivil_prefs.json")
         try:
             with open(prefs_path, 'w') as f:
-                json.dump({"msaa_level": new_settings.get("msaa_level", 2)}, f)
+                json.dump(new_settings, f)
         except:
             pass
 
@@ -2277,6 +2277,19 @@ class MainWindow(QMainWindow):
             self.canvas.single_use_pan_active = False
             self.status.showMessage("Ready")
 
+    def _apply_canvas_view_settings(self, gs):
+        """Applies project-level view toggles from a settings dict to the canvas."""
+        self.canvas.view_extruded        = gs.get('view_extruded', False)
+        self.canvas.show_slabs           = gs.get('show_slabs', True)
+        self.canvas.show_joints          = gs.get('show_joints', True)
+        self.canvas.show_supports        = gs.get('show_supports', True)
+        self.canvas.show_loads           = gs.get('show_loads', True)
+        self.canvas.show_local_axes      = gs.get('show_local_axes', False)
+        self.canvas.show_constraints     = gs.get('show_constraints', True)
+        self.canvas.show_releases        = gs.get('show_releases', True)
+        self.canvas.load_type_filter     = gs.get('load_type_filter', 'both')
+        self.canvas.visible_load_patterns = gs.get('visible_load_patterns', [])
+
 def main():
     if sys.platform == 'win32':
         myappid = 'metu.civil.OPENCIVIL.v03'
@@ -2446,9 +2459,11 @@ def main():
                     window.model.load_from_file(file_path)
                     window.undo_stack.clear()
                     window.model.file_path = file_path
+                    window.terminal_panel.set_model(window.model)
                     
                     if window.model.graphics_settings:
                         window.graphics_settings.update(window.model.graphics_settings)
+                        window._apply_canvas_view_settings(window.graphics_settings)
                         window.update_graphics_settings(window.graphics_settings)
                     
                     if hasattr(window.model, 'saved_unit_system'):

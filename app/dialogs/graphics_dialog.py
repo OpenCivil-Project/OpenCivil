@@ -78,6 +78,8 @@ class GraphicsOptionsDialog(QDialog):
         self.btn_restart.setStyleSheet("color: black; background-color: #ffffff; padding: 4px 8px;")
         self.btn_restart.clicked.connect(self._on_restart)
         v_gen.addWidget(self.btn_restart)
+
+        self._on_aa_changed(self.sl_aa.value())
         
         v_gen.addStretch()
         self.tabs.addTab(tab_gen, "General")
