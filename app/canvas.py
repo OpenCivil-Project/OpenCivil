@@ -311,6 +311,58 @@ class MCanvas3D(gl.GLViewWidget):
         model = self.current_model
         sel_color = np.array([1.0, 0.0, 0.0, 1.0])
         width = self.display_config.get("line_width", 2.0)
+
+        can_deflect = (self.view_deflected and
+                       hasattr(model, 'has_results') and
+                       model.has_results and
+                       model.results is not None)
+
+        if can_deflect:
+            curved_pos = []
+            curved_colors = []
+            for eid in self.selected_element_ids:
+                if eid not in model.elements:
+                    continue
+                el = model.elements[eid]
+                n1, n2 = el.node_i, el.node_j
+                p1 = np.array([n1.x, n1.y, n1.z])
+                p2 = np.array([n2.x, n2.y, n2.z])
+                if eid in self.deflection_cache:
+                    cached = self.deflection_cache[eid]
+                    curve_data_full = cached['curve_data']
+                    p1_orig = cached['p1_orig']
+                    p2_orig = cached['p2_orig']
+                    for k in range(len(curve_data_full) - 1):
+                        pos_full,  _, _ = curve_data_full[k]
+                        pos_full_next, _, _ = curve_data_full[k + 1]
+                        s      = k       / (len(curve_data_full) - 1)
+                        s_next = (k + 1) / (len(curve_data_full) - 1)
+                        pos_orig      = p1_orig + s      * (p2_orig - p1_orig)
+                        pos_orig_next = p1_orig + s_next * (p2_orig - p1_orig)
+                        p_start = pos_orig      + (pos_full      - pos_orig)      * self.anim_factor
+                        p_end   = pos_orig_next + (pos_full_next - pos_orig_next) * self.anim_factor
+                        curved_pos.extend([p_start, p_end])
+                        curved_colors.extend([sel_color, sel_color])
+                else:
+                                                           
+                    res_i = model.results.get("displacements", {}).get(str(n1.id))
+                    res_j = model.results.get("displacements", {}).get(str(n2.id))
+                    if res_i:
+                        p1 = p1 + np.array(res_i[:3]) * self.deflection_scale * self.anim_factor
+                    if res_j:
+                        p2 = p2 + np.array(res_j[:3]) * self.deflection_scale * self.anim_factor
+                    curved_pos.extend([p1, p2])
+                    curved_colors.extend([sel_color, sel_color])
+            if curved_pos:
+                item = gl.GLLinePlotItem(
+                    pos=np.array(curved_pos), color=np.array(curved_colors),
+                    mode='lines', width=width + 2, antialias=True
+                )
+                item.setGLOptions('translucent')
+                self.addItem(item)
+                self._sel_overlay_items.append(item)
+            return
+
         sel_pos = []
         for eid in self.selected_element_ids:
             if eid not in model.elements:
@@ -342,22 +394,56 @@ class MCanvas3D(gl.GLViewWidget):
             item.setGLOptions('opaque')
             self.addItem(item)
             self._sel_overlay_items.append(item)
-
     def _rebuild_extruded_selection_overlay(self):
         if not self.selected_element_ids or not self.current_model:
             return
         model = self.current_model
         color_sel = np.array([1.0, 1.0, 0.0, 1.0])
+
+        can_deflect = (self.view_deflected and
+                       hasattr(model, 'has_results') and
+                       model.has_results and
+                       model.results is not None)
+
         lines = []
         colors = []
         for eid in self.selected_element_ids:
             if eid not in model.elements:
                 continue
             el = model.elements[eid]
-            p1 = np.array([el.node_i.x, el.node_i.y, el.node_i.z])
-            p2 = np.array([el.node_j.x, el.node_j.y, el.node_j.z])
+            n1, n2 = el.node_i, el.node_j
+            p1 = np.array([n1.x, n1.y, n1.z])
+            p2 = np.array([n2.x, n2.y, n2.z])
+
+            if can_deflect:
+                if eid in self.deflection_cache:
+                    cached = self.deflection_cache[eid]
+                    curve_data_full = cached['curve_data']
+                    p1_orig = cached['p1_orig']
+                    p2_orig = cached['p2_orig']
+                    for k in range(len(curve_data_full) - 1):
+                        pos_full, _, _ = curve_data_full[k]
+                        pos_full_next, _, _ = curve_data_full[k + 1]
+                        s = k / (len(curve_data_full) - 1)
+                        s_next = (k + 1) / (len(curve_data_full) - 1)
+                        pos_orig = p1_orig + s * (p2_orig - p1_orig)
+                        pos_orig_next = p1_orig + s_next * (p2_orig - p1_orig)
+                        p_start = pos_orig + (pos_full - pos_orig) * self.anim_factor
+                        p_end = pos_orig_next + (pos_full_next - pos_orig_next) * self.anim_factor
+                        lines.extend([p_start, p_end])
+                        colors.extend([color_sel, color_sel])
+                    continue                                      
+                                                  
+                res_i = model.results.get("displacements", {}).get(str(n1.id))
+                res_j = model.results.get("displacements", {}).get(str(n2.id))
+                if res_i:
+                    p1 = p1 + np.array(res_i[:3]) * self.deflection_scale * self.anim_factor
+                if res_j:
+                    p2 = p2 + np.array(res_j[:3]) * self.deflection_scale * self.anim_factor
+
             lines.extend([p1, p2])
             colors.extend([color_sel, color_sel])
+
         if lines:
             cl = gl.GLLinePlotItem(
                 pos=np.array(lines), color=np.array(colors),
@@ -372,12 +458,25 @@ class MCanvas3D(gl.GLViewWidget):
             return
         model = self.current_model
         size = self.display_config.get("node_size", 6)
+
+        can_deflect = (self.view_deflected and
+                       hasattr(model, 'has_results') and
+                       model.has_results and
+                       model.results is not None)
+
         sel_pos = []
         for nid in self.selected_node_ids:
             if nid not in model.nodes:
                 continue
             n = model.nodes[nid]
-            sel_pos.append([n.x, n.y, n.z])
+            nx, ny, nz = n.x, n.y, n.z
+            if can_deflect:
+                disp = model.results.get("displacements", {}).get(str(nid))
+                if disp:
+                    nx += disp[0] * self.deflection_scale * self.anim_factor
+                    ny += disp[1] * self.deflection_scale * self.anim_factor
+                    nz += disp[2] * self.deflection_scale * self.anim_factor
+            sel_pos.append([nx, ny, nz])
         if sel_pos:
             sp = gl.GLScatterPlotItem(
                 pos=np.array(sel_pos), size=size + 2,
@@ -3135,4 +3234,4 @@ class MCanvas3D(gl.GLViewWidget):
         self.hovered_node_id = hovered_node
         self.hovered_elem_id = hovered_elem
             
-        self.update()                                          
+        self.update()
