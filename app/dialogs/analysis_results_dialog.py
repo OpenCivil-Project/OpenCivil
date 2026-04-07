@@ -282,9 +282,12 @@ class AnalysisResultsDialog(QDialog):
                 else:
                                         
                     if isinstance(val, float):
-                        if abs(val) < 1e-9 and val != 0: txt = f"{val:.4e}"
-                        elif abs(val) < 0.001 and val != 0: txt = f"{val:.6f}"
-                        else: txt = f"{val:.6f}"
+                        if abs(val) < 1e-9:
+                            txt = "0.0"       
+                        elif abs(val) < 0.001:
+                            txt = f"{val:.6f}"
+                        else:
+                            txt = f"{val:.6f}"
                     else:
                         txt = str(val)
                     item = QTableWidgetItem(txt)

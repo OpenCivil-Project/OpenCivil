@@ -63,6 +63,31 @@
             "modal_damping": 0.05,
             "ltha_damping": 0.05,
             "ltha_loads": []
+        },
+        {
+            "name": "RSA_X_Y",
+            "type": "Response Spectrum",
+            "loads": [],
+            "p_delta": false,
+            "mass_source": "Default",
+            "num_modes": 12,
+            "rsa_loads": [
+                [
+                    "U1",
+                    "FUNC1",
+                    9.81
+                ],
+                [
+                    "U1",
+                    "FUNC1",
+                    9.81
+                ]
+            ],
+            "modal_comb": "CQC",
+            "dir_comb": "SRSS",
+            "modal_damping": 0.05,
+            "ltha_damping": 0.05,
+            "ltha_loads": []
         }
     ],
     "grid": {
@@ -9294,7 +9319,19 @@
             "sw_mult": 1.0
         }
     ],
-    "loads": [],
+    "loads": [
+        {
+            "pattern": "DEAD",
+            "type": "nodal",
+            "node_id": 96,
+            "fx": 0.0,
+            "fy": 0.0,
+            "fz": -100000.0,
+            "mx": 0.0,
+            "my": 0.0,
+            "mz": 0.0
+        }
+    ],
     "mass_sources": [
         {
             "name": "MSSSRC1",
@@ -9308,6 +9345,21 @@
             ]
         }
     ],
-    "functions": [],
+    "functions": [
+        {
+            "type": "TSC-2018",
+            "name": "FUNC1",
+            "Ss": 0.55,
+            "S1": 0.22,
+            "TL": 6.0,
+            "R": 8.0,
+            "D": 3.0,
+            "I": 1.0,
+            "SiteClass": "ZB",
+            "Direction": "Horizontal",
+            "Interpolation": "Linear",
+            "Damping": 0.05
+        }
+    ],
     "th_functions": []
 }

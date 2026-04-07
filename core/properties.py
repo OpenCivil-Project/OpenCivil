@@ -1,4 +1,3 @@
-                             
 from dataclasses import dataclass
 import math
 
@@ -43,6 +42,24 @@ class Section:
 
     def get_insertion_point_shift(self, cardinal_point):
         return 0.0, 0.0
+
+    def get_shape_coords(self):
+        """Override in subclasses. Returns list of (y, z) tuples, centroid-centered."""
+        return []
+
+    def get_bbox_offsets(self):
+        """
+        Returns (y_left, y_right, z_bot, z_top) — all positive distances
+        from the centroid to each edge in local 2-3 coords.
+        Derived from get_shape_coords(), which must be centroid-centered.
+        Used by get_cardinal_offsets() in FrameElement.
+        """
+        coords = self.get_shape_coords()
+        if not coords:
+            return 0.0, 0.0, 0.0, 0.0
+        ys = [p[0] for p in coords]
+        zs = [p[1] for p in coords]
+        return -min(ys), max(ys), -min(zs), max(zs)
 
     def __repr__(self):
         return f"Section({self.name})"
@@ -400,8 +417,9 @@ class GeneralSection(Section):
         self.J = float(props_dict.get('J', 0.0))
         self.I33 = float(props_dict.get('I33', 0.0))
         self.I22 = float(props_dict.get('I22', 0.0))
-        self.Asy = float(props_dict.get('Asy', 0.0))
-        self.Asz = float(props_dict.get('Asz', 0.0))
+        
+        self.Asy = float(props_dict.get('As2', props_dict.get('Asy', 0.0)))
+        self.Asz = float(props_dict.get('As3', props_dict.get('Asz', 0.0)))
         
         self.S33 = 0.0; self.S22 = 0.0; self.Z33 = 0.0; self.Z22 = 0.0
         self.r33 = 0.0; self.r22 = 0.0
@@ -412,3 +430,35 @@ class GeneralSection(Section):
 
     def get_insertion_point_shift(self, cardinal_point):
         return 0.0, 0.0
+
+class ArbitrarySection(GeneralSection):
+    """
+    A user-drawn arbitrary polygon section.
+    Stores the original vertices so the Section Designer can re-open
+    and edit them. Props are computed by SectionAnalyzer and passed in
+    as a dict — same contract as GeneralSection.
+    Inherits get_insertion_point_shift from GeneralSection (returns 0,0).
+    """
+
+    def __init__(self, name, material, vertices, props_dict, color=None):
+        """
+        Parameters
+        ----------
+        vertices : list of (y, z) tuples in base SI units (metres).
+                   Same coordinate convention as every other get_shape_coords().
+        props_dict : dict with keys A, J, I33, I22, Asy, Asz, y_c, z_c
+                     (all in base SI — metres / Newtons).
+        """
+        super().__init__(name, material, props_dict, color)
+        self.vertices = list(vertices)
+                                                                                      
+        self._y_c = float(props_dict.get('y_c', 0.0))
+        self._z_c = float(props_dict.get('z_c', 0.0))
+
+    def get_shape_coords(self):
+        """
+        Return the drawn polygon shifted to centroid-centered coords.
+        This keeps the same contract as all other Section types, so
+        get_bbox_offsets() and the 3D extrusion work correctly.
+        """
+        return [(y - self._y_c, z - self._z_c) for y, z in self.vertices]

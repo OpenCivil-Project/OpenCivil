@@ -30,6 +30,7 @@ pyinstaller --noconsole --onedir --name="OpenCivil" `
   --collect-all "core" `
   --collect-all "auth" `
   --collect-all "app" `
+  --collect-all "section_designer" `
   --collect-all "graphic" `
   --collect-all "pyqtgraph" `
   --collect-all "qtawesome" `
@@ -69,6 +70,7 @@ pyinstaller --noconsole --onedir --name="OpenCivil" `
   --hidden-import="matplotlib.backends.backend_qtagg" `
   --hidden-import="openpyxl" `
   --hidden-import="openpyxl.cell._writer" `
+  --hidden-import="PyQt6.QtNetwork" `
   --hidden-import="pandas" `
   --exclude-module "torch" `
   --exclude-module "tkinter" `

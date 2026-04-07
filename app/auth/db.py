@@ -26,7 +26,12 @@ class Database:
         if not uri:
             raise ConnectionFailure("MONGO_URI not found — check your .env file location.")
         try:
-            cls._client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+            import certifi
+            cls._client = MongoClient(
+                uri,
+                serverSelectionTimeoutMS=5000,
+                tlsCAFile=certifi.where()
+            )
             cls._client.admin.command('ping')
             cls._db = cls._client[DB_NAME]
             cls._ensure_indexes()

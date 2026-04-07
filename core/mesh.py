@@ -1,4 +1,3 @@
-                       
 import math
 import numpy as np
 from core.properties import Section
@@ -108,56 +107,32 @@ class FrameElement:
     
     def get_cardinal_offsets(self):
         """
-        Calculates the local offsets (ey, ez) from the Node to the Section Centroid
-        based on the Cardinal Point ID (1-11).
-        
-        Returns:
-            offset_y, offset_z (Distances from Node to Centroid)
+        Returns (ey, ez): the offset in local 2-3 coords from the Node (at the
+        cardinal point) to the Section Centroid, for cardinal point IDs 1-11.
+
+        Uses section.get_bbox_offsets() which works for all section types
+        including arbitrary polygons from the Section Designer.
+
+        Sign convention (matches the renderer and get_insertion_matrix):
+          positive ey → centroid is in the +local2 direction from the node
+          positive ez → centroid is in the +local3 direction from the node
         """
-                                                                   
-        if self.cardinal_point == 10:
-            base_y, base_z = 0.0, 0.0
-        
-        elif self.cardinal_point == 11:
-                                                                             
-            base_y, base_z = 0.0, 0.0
-            
-        else:
-                                                                            
-            h = getattr(self.section, 'h', getattr(self.section, 'd', 0.0))
-            
-            if hasattr(self.section, 'b'): 
-                b = self.section.b              
-            elif hasattr(self.section, 'w_top'):
-                b = max(self.section.w_top, self.section.w_bot)            
-            elif hasattr(self.section, 'd'):
-                b = self.section.d                                     
-            else:
-                b = 0.0             
+        y_l, y_r, z_b, z_t = self.section.get_bbox_offsets()
 
-            if hasattr(self.section, 'y_bar'):
-                                                
-                c_bot = self.section.y_bar                                           
-                c_top = h - self.section.y_bar                                    
-            else:
-                                                        
-                c_bot = h / 2
-                c_top = h / 2
-
-            if self.cardinal_point in [1, 2, 3]:               
-                base_z = c_bot
-            elif self.cardinal_point in [4, 5, 6]:                           
-                base_z = 0.0
-            else:                     
-                base_z = -c_top
-
-            if self.cardinal_point in [1, 4, 7]: y_mult = 0.5         
-            elif self.cardinal_point in [2, 5, 8]: y_mult = 0.0         
-            else: y_mult = -0.5                                        
-
-            base_y = y_mult * b
-
-        return base_y, base_z
+        table = {
+            1:  (+y_l,  +z_b),                
+            2:  ( 0.0,  +z_b),                  
+            3:  (-y_r,  +z_b),                 
+            4:  (+y_l,   0.0),                
+            5:  ( 0.0,   0.0),                  
+            6:  (-y_r,   0.0),                 
+            7:  (+y_l,  -z_t),             
+            8:  ( 0.0,  -z_t),               
+            9:  (-y_r,  -z_t),              
+            10: ( 0.0,   0.0),                         
+            11: ( 0.0,   0.0),                               
+        }
+        return table.get(self.cardinal_point, (0.0, 0.0))
 
     def get_insertion_matrix(self):
         """
@@ -173,6 +148,9 @@ class FrameElement:
         
         local_off_i = R @ self.joint_offset_i
         local_off_j = R @ self.joint_offset_j
+
+        ex_i = local_off_i[0] + self.end_offset_i
+        ex_j = local_off_j[0] - self.end_offset_j
         
         ey_i = cy + local_off_i[1]
         ez_i = cz + local_off_i[2]
@@ -180,18 +158,19 @@ class FrameElement:
         ey_j = cy + local_off_j[1]
         ez_j = cz + local_off_j[2]
 
-        def make_block(ey, ez):
+        def make_block(ex, ey, ez):
             B = np.eye(6)
-                                                                
             B[0, 4] = ez                             
             B[0, 5] = -ey                            
-            B[1, 3] = -ez                         
-            B[2, 3] = ey                          
+            B[1, 3] = -ez
+            B[1, 5] = ex                                                                           
+            B[2, 3] = ey
+            B[2, 4] = -ex                                                                            
             return B
 
         T = np.zeros((12, 12))
-        T[0:6, 0:6]   = make_block(ey_i, ez_i)
-        T[6:12, 6:12] = make_block(ey_j, ez_j)
+        T[0:6, 0:6]   = make_block(ex_i, ey_i, ez_i)
+        T[6:12, 6:12] = make_block(ex_j, ey_j, ez_j)
         
         return T
     

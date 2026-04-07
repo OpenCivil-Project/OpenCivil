@@ -1,7 +1,8 @@
 import json
 from core.mesh import Node, FrameElement
 from core.properties import (Material, RectangularSection, ISection, GeneralSection,
-                             CircularSection, PipeSection, TubeSection, TrapezoidalSection)
+                             CircularSection, PipeSection, TubeSection, TrapezoidalSection,
+                             ArbitrarySection)
 from core.grid import GridLines
 from core.boundary import apply_restraint, Restraint
 from core.mesh import Slab 
@@ -347,6 +348,13 @@ class StructuralModel:
                 sec_data.update({"type": "tube", "d": sec.d, "b": sec.b, "tf": sec.tf, "tw": sec.tw})
             elif isinstance(sec, TrapezoidalSection):
                 sec_data.update({"type": "trapezoidal", "d": sec.d, "w_top": sec.w_top, "w_bot": sec.w_bot})
+            elif isinstance(sec, ArbitrarySection):
+                sec_data.update({
+                    "type": "arbitrary",
+                    "vertices": sec.vertices,                                   
+                    "y_c": sec._y_c,                                    
+                    "z_c": sec._z_c,
+                })
             elif isinstance(sec, GeneralSection):
                 sec_data.update({"type": "general"})
             
@@ -483,11 +491,23 @@ class StructuralModel:
                 sec = TubeSection(s_data["name"], mat, s_data["d"], s_data["b"], s_data["tf"], s_data["tw"])
             elif s_data["type"] == "trapezoidal":
                 sec = TrapezoidalSection(s_data["name"], mat, s_data["d"], s_data["w_top"], s_data["w_bot"])
+            elif s_data["type"] == "arbitrary":
+                p = s_data["properties"]
+                props_dict = {
+                    'A': p["A"], 'J': p["J"], 'I33': p["I33"], 'I22': p["I22"],
+                                                                 
+                    'As2': p.get("Asy", p.get("As2", 0.0)), 
+                    'As3': p.get("Asz", p.get("As3", 0.0)),
+                    'y_c': s_data.get("y_c", 0.0),
+                    'z_c': s_data.get("z_c", 0.0),
+                }
+                vertices = [tuple(v) for v in s_data.get("vertices", [])]
+                sec = ArbitrarySection(s_data["name"], mat, vertices, props_dict)
             elif s_data["type"] == "general":
                 p = s_data["properties"]
                 props_dict = {
                     'A': p["A"], 'J': p["J"], 'I33': p["I33"], 'I22': p["I22"],
-                    'Asy': p["As2"], 'Asz': p["As3"]
+                    'As2': p["As2"], 'As3': p["As3"]
                 }
                 sec = GeneralSection(s_data["name"], mat, props_dict)
 

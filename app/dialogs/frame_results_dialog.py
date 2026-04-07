@@ -19,7 +19,7 @@ if root_dir not in sys.path:
 from core.solver.linear_static.element_library import get_local_stiffness_matrix, get_rotation_matrix, get_eccentricity_matrix
 
 class MemberAnalyzer:
-    def __init__(self, element, model, num_stations=21):
+    def __init__(self, element, model, num_stations=101):                                            
         self.el = element
         self.model = model
         self.n_stations = num_stations
@@ -36,7 +36,7 @@ class MemberAnalyzer:
                         str_id = str(self.el.id)
                         if str_id in data:
                             self.element_fef = np.array(data[str_id]["fef"])
-                            print(f"Loaded FEF for Element {self.el.id}: {self.element_fef}")
+                            print(f"Loaded FEF for Element {self.el.id}")
             else:
                 print("Warning: Model does not have a file_path attribute. Cannot find matrices.")
         except Exception as e:
@@ -55,7 +55,6 @@ class MemberAnalyzer:
         self.calculate_results()
 
     def calculate_results(self):
-                                             
         res = self.model.results["displacements"]
                                      
         u_i = np.array(res.get(str(self.el.node_i.id), [0.0]*6))
@@ -103,16 +102,69 @@ class MemberAnalyzer:
         u1, v1, w1, thx1, thy1, thz1 = u_flex[0:6]
         u2, v2, w2, thx2, thy2, thz2 = u_flex[6:12]
 
+        w_loc = np.zeros(3)                                        
+        point_loads = []                        
+
+        for load in self.model.loads:
+            if getattr(load, 'element_id', None) == self.el.id:
+                is_local = getattr(load, 'coord_system', 'Global').lower() == 'local'
+                
+                if hasattr(load, 'wx'):                    
+                    w_vec = np.array([load.wx, load.wy, load.wz])
+                    if not is_local:
+                        w_vec = R_3x3 @ w_vec                      
+                    w_loc += w_vec
+                    
+                elif hasattr(load, 'force'):              
+                    a = load.dist * self.L_clear if getattr(load, 'is_relative', False) else load.dist
+                    dir_map = {'X': 0, 'Y': 1, 'Z': 2, '1': 0, '2': 1, '3': 2}
+                    idx = dir_map.get(str(getattr(load, 'direction', 'Z')).upper(), 2)
+                    
+                    vec = np.zeros(3)
+                    vec[idx] = load.force
+                    if not is_local:
+                        vec = R_3x3 @ vec                      
+                    
+                    l_type = getattr(load, 'load_type', 'Force').lower()
+                    if l_type == 'moment':
+                        point_loads.append({'a': a, 'F': np.zeros(3), 'M': vec})
+                    else:
+                        point_loads.append({'a': a, 'F': vec, 'M': np.zeros(3)})
+
         for i, x in enumerate(self.stations):
             xi = x / self.L_clear
             
-            self.P[i] = -Fx1                                    
+            P_val  = -Fx1
+            V2_val = -Fy1
+            V3_val = -Fz1
+            M3_val = -Mz1 - (-Fy1) * x
+            M2_val = -My1 - (-Fz1) * x
             
-            self.V2[i] = -Fy1                 
-            self.M3[i] = -Mz1 - self.V2[i]*x                     
+            P_val  -= w_loc[0] * x
+            V2_val -= w_loc[1] * x
+            V3_val -= w_loc[2] * x
+            M3_val -= w_loc[1] * (x**2) / 2.0
+            M2_val += w_loc[2] * (x**2) / 2.0 
             
-            self.V3[i] = -Fz1
-            self.M2[i] = -My1 - self.V3[i]*x                                                  
+            for pl in point_loads:
+                a = pl['a']
+                if x > a:
+                    dist_x = x - a
+                    P_val  -= pl['F'][0]
+                    V2_val -= pl['F'][1]
+                    V3_val -= pl['F'][2]
+                    
+                    M3_val -= pl['F'][1] * dist_x
+                    M2_val += pl['F'][2] * dist_x
+                    
+                    M3_val -= pl['M'][2]  
+                    M2_val -= pl['M'][1]  
+
+            self.P[i]  = P_val
+            self.V2[i] = V2_val
+            self.V3[i] = V3_val
+            self.M3[i] = M3_val
+            self.M2[i] = M2_val
             
             N1 = 1 - 3*xi**2 + 2*xi**3
             N2 = x * (1 - 2*xi + xi**2)
@@ -235,12 +287,10 @@ class FreeBodyWidget(QWidget):
             text = f"{label}: {val:.1f}"
             
             if is_moment:
-                     
                 rect = QRectF(x-15, y_beam-15, 30, 30)
                 painter.drawArc(rect, 0, 16*360)
                 painter.drawText(int(x)-20, int(y_beam)-25, text)
             else:
-                             
                 dir = -1 if val > 0 else 1
                 p_tip = QPointF(x, y_beam)
                 p_tail = QPointF(x, y_beam + dir * 30)

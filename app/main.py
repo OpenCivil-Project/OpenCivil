@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
 from PyQt6.QtGui import QAction, QPixmap,QCursor, QVector3D, QColor, QIcon
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QWidget, 
                              QMessageBox, QFileDialog, QSplashScreen, QLabel, 
-                             QComboBox,QProgressBar, QProgressDialog, QSplitter, QSizePolicy)
+                             QComboBox,QProgressBar, QProgressDialog, QSplitter, QSizePolicy, QFrame)
 from PyQt6.QtWidgets import QMenu
 from PyQt6.QtGui import QCursor
 from PyQt6.QtGui import QUndoStack  
@@ -61,6 +61,7 @@ from app.auth import GoogleAuthManager, UserProfileWidget
 from app.dialogs.time_history_manager import TimeHistoryManagerDialog
 from app.dialogs.solid_analysis_dialog import SolidAnalysisDialog
 from core.terminal_panel import TerminalPanel
+from app.ipc import IPCManager
 
 class OPENCIVILSplash(QSplashScreen):
     def __init__(self, pixmap):
@@ -159,6 +160,7 @@ class MainWindow(QMainWindow):
         self.model = None 
 
         self.undo_stack = QUndoStack(self)
+        self.undo_stack.indexChanged.connect(self._on_model_changed)
 
         self.graphics_settings = {
             "background_color": (1.0, 1.0, 1.0, 1.0), 
@@ -519,6 +521,13 @@ class MainWindow(QMainWindow):
         self.btn_cli.triggered.connect(self._toggle_terminal)
         self.toolbar.addAction(self.btn_cli)
 
+        self.btn_dual_view = QAction(qta.icon('fa5s.columns', color="#6c757d"), "Dual Viewport", self)
+        self.btn_dual_view.setToolTip("Toggle Dual Viewport")
+        self.btn_dual_view.setCheckable(True)
+        self.btn_dual_view.setChecked(False)
+        self.btn_dual_view.triggered.connect(self._toggle_dual_view)
+        self.toolbar.addAction(self.btn_dual_view)
+
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.toolbar.addWidget(spacer)
@@ -530,11 +539,37 @@ class MainWindow(QMainWindow):
         self.layout.setSpacing(0)
 
         self.canvas = MCanvas3D()
+        self.canvas2 = MCanvas3D()
+        self.active_canvas = self.canvas
+
+        self.canvas_frame1 = QFrame()
+        self.canvas_frame1.setLayout(QVBoxLayout())
+        self.canvas_frame1.layout().setContentsMargins(2,2,2,2)
+        self.canvas_frame1.layout().addWidget(self.canvas)
+
+        self.canvas_frame2 = QFrame()
+        self.canvas_frame2.setLayout(QVBoxLayout())
+        self.canvas_frame2.layout().setContentsMargins(2,2,2,2)
+        self.canvas_frame2.layout().addWidget(self.canvas2)
+
+        self.canvas_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.canvas_splitter.addWidget(self.canvas_frame1)
+        self.canvas_splitter.addWidget(self.canvas_frame2)
+        self.canvas_splitter.setSizes([600, 600])
+        self.canvas_splitter.setChildrenCollapsible(False)
 
         self.splitter = QSplitter(Qt.Orientation.Vertical)
-        self.splitter.addWidget(self.canvas)
+        self.splitter.addWidget(self.canvas_splitter)
         self.splitter.setChildrenCollapsible(False)
         self.layout.addWidget(self.splitter)
+
+        self.canvas2_visible = False
+        self.canvas_frame2.setVisible(False)
+        self._update_active_border()
+
+        from PyQt6.QtCore import QEvent
+        self.canvas.installEventFilter(self)
+        self.canvas2.installEventFilter(self)
 
         self.terminal_panel = TerminalPanel(
             model=None,
@@ -623,6 +658,15 @@ class MainWindow(QMainWindow):
         self.canvas.signal_right_clicked.connect(self.handle_right_click) 
         self.canvas.signal_box_selection.connect(self.handle_box_selection)
         self.canvas.signal_mouse_moved.connect(self.on_mouse_moved)
+
+        self.canvas2.signal_canvas_clicked.connect(
+            lambda x, y, z: self.handle_canvas_click(x, y, z) if self.active_canvas is self.canvas2 else None
+        )
+        self.canvas2.signal_right_clicked.connect(
+            lambda: self.handle_right_click() if self.active_canvas is self.canvas2 else None
+        )
+        self.canvas2.signal_box_selection.connect(self._handle_box_selection_canvas2)
+        self.canvas2.signal_mouse_moved.connect(self.on_mouse_moved)
         
         self.setup_statusbar()
 
@@ -725,13 +769,13 @@ class MainWindow(QMainWindow):
         self.status.showMessage(f"Units changed to: {unit_text}")
         
         if self.model:
-            self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
+            self.draw_both_canvases()
 
     def set_view_3d(self):
         self.current_view_mode = "3D"
         self.canvas.active_view_plane = None 
         self.canvas.set_standard_view("3D")  
-        if self.model: self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
+        if self.model: self.draw_both_canvases()
         self.status.showMessage("View: Full 3D")
 
     def set_view_2d(self, axis):
@@ -759,14 +803,14 @@ class MainWindow(QMainWindow):
         self.current_grid_index = max(0, min(self.current_grid_index, len(grid_list) - 1))
         val = grid_list[self.current_grid_index]
         self.canvas.active_view_plane = {'axis': axis, 'value': val}
-        if self.model: self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
+        if self.model: self.draw_both_canvases()
         self.status.showMessage(f"Filtered View: {self.current_view_mode} @ {axis.upper()}={val:.2f}m")
 
     def set_view_iso(self):
         self.current_view_mode = "3D"
         self.canvas.active_view_plane = None
         self.canvas.set_standard_view("ISO") 
-        if self.model: self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
+        if self.model: self.draw_both_canvases()
         self.status.showMessage("View: Orthogonal Isometric")  
 
     def on_new_model(self):
@@ -810,7 +854,7 @@ class MainWindow(QMainWindow):
                 self.model.load_cases["RSA_X"] = rsa_case
 
                 self.set_interface_state(True)
-                self.canvas.draw_model(self.model)
+                self.draw_both_canvases()
                 self.status.showMessage(f"New Model Created. Units: {dialog.selected_units}")
                 self.update_window_title()
 
@@ -835,7 +879,7 @@ class MainWindow(QMainWindow):
                     self.combo_units.blockSignals(False)
                     self.on_units_changed(0) 
                 
-                self.canvas.draw_model(self.model)
+                self.draw_both_canvases()
                 self.status.showMessage(f"Loaded: {filename}")
                 self.canvas.set_standard_view("3D")
                 self.set_interface_state(True) 
@@ -896,7 +940,7 @@ class MainWindow(QMainWindow):
         if not self.model: return
         dialog = SectionManagerDialog(self.model, self)
         dialog.exec()
-        self.canvas.draw_model(self.model)
+        self.draw_both_canvases()
 
     def on_define_load_patterns(self):
         if not self.model: return
@@ -1097,7 +1141,15 @@ class MainWindow(QMainWindow):
             self.model.grid.z_lines = new_grids["z"]
             
             self.canvas.draw_model(self.model)
+            if getattr(self, 'canvas2_visible', False):
+                self.canvas2.draw_model(self.model)
             self.status.showMessage("Grid System Updated.")
+
+    def _handle_box_selection_canvas2(self, node_ids, elem_ids, is_additive, is_deselect):
+        """Route canvas2 box-selection only when canvas2 is the active canvas."""
+        if self.active_canvas is not self.canvas2:
+            return
+        self.handle_box_selection(node_ids, elem_ids, is_additive, is_deselect)
 
     def handle_box_selection(self, node_ids, elem_ids, is_additive, is_deselect):
         if is_deselect:
@@ -1122,7 +1174,7 @@ class MainWindow(QMainWindow):
                     self.selected_node_ids = []
                     self.status.showMessage("Selection Cleared")
         
-        self.canvas.update_selection_overlay(self.selected_ids, self.selected_node_ids)
+        self.active_canvas.update_selection_overlay(self.selected_ids, self.selected_node_ids)
 
         modifiers = QApplication.keyboardModifiers()
         is_focus_requested = (modifiers == Qt.KeyboardModifier.AltModifier)
@@ -1261,7 +1313,7 @@ class MainWindow(QMainWindow):
         selected_nodes.sort(key=lambda n: math.atan2(n.y - cy, n.x - cx))
 
         self.model.add_slab(selected_nodes, thickness=0.2)
-        self.canvas.draw_model(self.model)
+        self.draw_both_canvases()
         self.status.showMessage(f"Slab Created with {len(selected_nodes)} nodes.")
         print(f"> GUI: Slab created using {len(selected_nodes)} selected nodes.")
 
@@ -1291,7 +1343,7 @@ class MainWindow(QMainWindow):
         self.canvas.load_type_filter = settings.get('load_type', 'both')
         self.canvas.visible_load_patterns = settings.get('visible_patterns', [])
         
-        self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
+        self.draw_both_canvases()
         self.status.showMessage(f"Display Options Updated")
 
     def on_edit_replicate(self):
@@ -1336,7 +1388,7 @@ class MainWindow(QMainWindow):
         count = self.model.merge_nodes(tolerance=0.005)                
         
         if count > 0:
-            self.canvas.draw_model(self.model)
+            self.draw_both_canvases()
             self.status.showMessage(f"Merge Complete: {count} joints removed.")
             QMessageBox.information(self, "Merge", f"Successfully merged {count} duplicate joints.")
         else:
@@ -1401,7 +1453,7 @@ class MainWindow(QMainWindow):
         self.canvas.setBackgroundColor(c)
 
         if self.model:
-            self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
+            self.draw_both_canvases()
             
         self.status.showMessage("Graphics settings updated.")
 
@@ -1623,7 +1675,7 @@ class MainWindow(QMainWindow):
         if "mode_shapes" in results and "Mode 1" in results["mode_shapes"]:
             self.switch_modal_view("Mode 1")
         else:
-            self.canvas.draw_model(self.model)
+            self.draw_both_canvases()
 
         from app.dialogs.analysis_results_dialog import AnalysisResultsDialog
         dlg = AnalysisResultsDialog(self.model.results, self)
@@ -1707,7 +1759,7 @@ class MainWindow(QMainWindow):
                 if "mode_shapes" in data and "Mode 1" in data["mode_shapes"]:
                     self.switch_modal_view("Mode 1")
                 else:
-                    self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
+                    self.draw_both_canvases()
                     
             elif info_type == "Linear Time History Analysis":
                                              
@@ -1781,7 +1833,7 @@ class MainWindow(QMainWindow):
                                           
         self.status.showMessage("Results discarded. Model unlocked for editing.")
         
-        self.canvas.draw_model(self.model)
+        self.draw_both_canvases()
 
     def show_node_results(self, node_id):
         """Displays the small popup box with deformations."""
@@ -1909,7 +1961,7 @@ class MainWindow(QMainWindow):
         self.canvas.view_shadow = show_shadow
         self.canvas.shadow_color = shadow_color
         
-        self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
+        self.draw_both_canvases()
         
         state_msg = "ON" if is_visible else "OFF"
         self.status.showMessage(f"Deformed Shape: {state_msg} (Scale: {scale_factor}x)")
@@ -2122,7 +2174,7 @@ class MainWindow(QMainWindow):
         if hasattr(self.canvas, 'animation_manager'):
             self.canvas.animation_manager.invalidate_prerender()
             
-        self.canvas.draw_model(self.model)
+        self.draw_both_canvases()
         
         self.status.showMessage(f"{self.status.currentMessage()} (Auto-Scale: {auto_scale:.1f}x)")
 
@@ -2199,9 +2251,23 @@ class MainWindow(QMainWindow):
         dlg = SolidAnalysisDialog(self)
         dlg.show()  
 
+    def _on_model_changed(self, idx):
+        """Called on every undo stack push/undo/redo — keeps canvas2 in sync."""
+        if self.model and getattr(self, 'canvas2_visible', False):
+            self.canvas2.draw_model(self.model)
+
+    def draw_both_canvases(self, sel_elems=None, sel_nodes=None):
+        """Draw the model on both canvases. Selection state only on the active canvas."""
+        if not self.model:
+            return
+        e = sel_elems if sel_elems is not None else self.selected_ids
+        n = sel_nodes if sel_nodes is not None else self.selected_node_ids
+        self.canvas.draw_model(self.model, e, n)
+        if getattr(self, 'canvas2_visible', False):
+            self.canvas2.draw_model(self.model)
+
     def refresh_canvas(self):
-        if self.model:
-            self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
+        self.draw_both_canvases()
 
     def _toggle_terminal(self):
         self.terminal_panel.toggle()
@@ -2236,7 +2302,7 @@ class MainWindow(QMainWindow):
             self.combo_units.blockSignals(False)
             self.on_units_changed(0)
 
-        self.canvas.draw_model(self.model)
+        self.draw_both_canvases()
         self.canvas.set_standard_view("3D")
         self.set_interface_state(True)
         self.update_window_title()
@@ -2254,7 +2320,7 @@ class MainWindow(QMainWindow):
             return
         
         self.canvas.view_deflected = checked
-        self.canvas.draw_model(self.model, self.selected_ids, self.selected_node_ids)
+        self.draw_both_canvases()
         
         state_msg = "ON" if checked else "OFF"
         self.status.showMessage(f"Deformed Shape: {state_msg} (Scale: {self.canvas.deflection_scale:.2f}x)")
@@ -2290,12 +2356,55 @@ class MainWindow(QMainWindow):
         self.canvas.load_type_filter     = gs.get('load_type_filter', 'both')
         self.canvas.visible_load_patterns = gs.get('visible_load_patterns', [])
 
+    def _update_active_border(self):
+        active_style   = "QFrame { border: 2px solid #0078d7; }"
+        inactive_style = "QFrame { border: 2px solid #cccccc; }"
+        self.canvas_frame1.setStyleSheet(active_style if self.active_canvas == self.canvas else inactive_style)
+        self.canvas_frame2.setStyleSheet(active_style if self.active_canvas == self.canvas2 else inactive_style)
+
+    def _set_active_canvas(self, canvas):
+        self.active_canvas = canvas
+        self._update_active_border()
+
+    def eventFilter(self, obj, event):
+        from PyQt6.QtCore import QEvent
+        if obj in (self.canvas, self.canvas2):
+            if event.type() in (QEvent.Type.MouseButtonPress,
+                                QEvent.Type.MouseButtonRelease,
+                                QEvent.Type.MouseMove,
+                                QEvent.Type.Wheel):
+                if obj != self.active_canvas:
+                    if event.type() == QEvent.Type.MouseButtonPress:
+                        self._set_active_canvas(obj)
+                                                                               
+                        return False
+                                                                                     
+                    return True
+        return super().eventFilter(obj, event)
+
+    def _toggle_dual_view(self, checked):
+        self.canvas2_visible = checked
+        self.canvas_frame2.setVisible(checked)
+        if checked:
+            if self.model:
+                self.canvas2.draw_model(self.model)
+                                                                        
+            QTimer.singleShot(50, lambda: self.canvas2.set_standard_view("ISO"))
+        else:
+                                                                
+            self._set_active_canvas(self.canvas)
+
 def main():
     if sys.platform == 'win32':
         myappid = 'metu.civil.OPENCIVIL.v03'
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
     app = QApplication(sys.argv)
+
+    ipc = IPCManager()
+    is_secondary = ipc.connect_to_primary()
+    if not is_secondary:
+        ipc.start_server()           
 
     if getattr(sys, 'frozen', False):
         pkl_path = next((arg for arg in sys.argv if arg.endswith('.pkl')), None)
@@ -2347,12 +2456,68 @@ def main():
     fmt.setSamples(msaa_map[msaa_level])
     fmt.setDepthBufferSize(24)
     QSurfaceFormat.setDefaultFormat(fmt)
+
+    if is_secondary:
+        auth_manager = GoogleAuthManager()
+        if not auth_manager.restore_session():
+            QMessageBox.warning(
+                None, "Session Expired",
+                "Your session has expired.\n"
+                "Please restart OpenCivil to log in again."
+            )
+            sys.exit(0)
+
+        window = MainWindow()
+        window.auth_manager = auth_manager
+        ipc.send_secondary_ready()
+        ipc.listen_as_secondary(window)
+        window.showMaximized()
+
+        def _attach_secondary():
+            window.user_widget = UserProfileWidget(auth_manager, parent=window)
+            window.user_widget.reposition()
+            window.user_widget.show()
+            window.user_widget.raise_()
+            window.user_widget.logout_requested.connect(window.close)
+
+        QTimer.singleShot(150, _attach_secondary)
+
+        def _load_secondary_file():
+            if len(sys.argv) > 1:
+                file_path = sys.argv[1]
+                if os.path.exists(file_path) and file_path.endswith('.mf'):
+                    try:
+                        window.model = StructuralModel("Loaded Project")
+                        window.model.load_from_file(file_path)
+                        window.undo_stack.clear()
+                        window.model.file_path = file_path
+                        window.terminal_panel.set_model(window.model)
+                        if window.model.graphics_settings:
+                            window.graphics_settings.update(window.model.graphics_settings)
+                            window._apply_canvas_view_settings(window.graphics_settings)
+                            window.update_graphics_settings(window.graphics_settings)
+                        if hasattr(window.model, 'saved_unit_system'):
+                            window.combo_units.blockSignals(True)
+                            window.combo_units.setCurrentText(window.model.saved_unit_system)
+                            window.combo_units.blockSignals(False)
+                            window.on_units_changed(0)
+                        window.canvas.draw_model(window.model)
+                        window.status.showMessage(f"Loaded: {file_path}")
+                        window.canvas.set_standard_view("3D")
+                        window.set_interface_state(True)
+                        window.update_window_title()
+                    except Exception as e:
+                        QMessageBox.critical(window, "Load Error", f"Failed to open file.\n{e}")
+
+        QTimer.singleShot(300, _load_secondary_file)
+        sys.exit(app.exec())
     
     video_path = os.path.join(root_dir, "graphic", "Animation.gif")
     
     if not os.path.exists(video_path):
         print("Video not found, skipping splash.")
         window = MainWindow()
+        ipc.raise_requested.connect(lambda: (window.showNormal(), window.raise_(), window.activateWindow()))
 
         auth_manager = GoogleAuthManager()
         if not auth_manager.login(parent=None):
@@ -2372,6 +2537,7 @@ def main():
 
     splash = VideoSplash(video_path)
     window = MainWindow()
+    ipc.raise_requested.connect(lambda: (window.showNormal(), window.raise_(), window.activateWindow()))
     
     def on_splash_finished():
         splash.close()
@@ -2388,7 +2554,6 @@ def main():
 
         def attach_user_widget():
             window.user_widget = UserProfileWidget(auth_manager, parent=window)
-            window.toolbar.addWidget(window.user_widget) 
             window.user_widget.reposition()
             window.user_widget.show()
             window.user_widget.raise_()
@@ -2436,6 +2601,7 @@ def main():
                 if hasattr(window, 'user_widget'):
                     window.user_widget.deleteLater()
 
+                ipc.broadcast_logout()                                 
                 window.hide()
 
                 if auth_manager.login(parent=None):
@@ -2472,7 +2638,7 @@ def main():
                         window.combo_units.blockSignals(False)
                         window.on_units_changed(0)
                     
-                    window.canvas.draw_model(window.model)
+                    window.draw_both_canvases()
                     window.status.showMessage(f"Loaded: {file_path}")
                     window.canvas.set_standard_view("3D")
                     window.set_interface_state(True)

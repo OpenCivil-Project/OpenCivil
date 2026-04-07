@@ -170,6 +170,13 @@ class SolidMesher:
             ]
             return self._extrude_polygon(pts_yz, L, y0, z0)
 
+        elif t == 'arbitrary':
+            pts_yz = sec.get('vertices', [])
+            if not pts_yz or len(pts_yz) < 3:
+                print("  Warning: Arbitrary section has missing or invalid vertices.")
+                return None
+            return self._extrude_polygon(pts_yz, L, cp_y, cp_z)
+
         elif t == 'tube':
             d  = float(sec.get('d', 0.2))               
             b  = float(sec.get('b', 0.15))              
@@ -237,8 +244,13 @@ class SolidMesher:
         if t == 'i_section':    return max(float(sec.get('w_top', 0.3)), float(sec.get('w_bot', 0.3))), float(sec['h'])
         if t == 'tube':         return float(sec.get('b', 0.3)), float(sec.get('d', 0.3))
         if t == 'trapezoidal':  return max(float(sec.get('w_top', 0.3)), float(sec.get('w_bot', 0.3))), float(sec['d'])
-        return float(sec.get('b', 0.3)), float(sec.get('h', 0.3))
-
+        if t == 'arbitrary':
+            verts = sec.get('vertices', [])
+            if verts:
+                ys = [v[0] for v in verts]
+                zs = [v[1] for v in verts]
+                return float(max(ys) - min(ys)), float(max(zs) - min(zs))
+            
     def _cardinal_offset(self, cardinal, b, h):
         """
         Returns (offset_y, offset_z) in local coords to shift box origin.

@@ -325,8 +325,18 @@ class UserProfileWidget(QWidget):
         if not self.parent():
             return
         self.adjustSize()
-        x = self.parent().width() - self.width() - 16
-        self.move(x, 7)
+        p = self.parent()
+        x = p.width() - self.width() - 16
+
+        win = self.window()
+        if hasattr(win, 'toolbar'):
+            tb = win.toolbar
+            tb_pos = tb.mapTo(p, QPoint(0, 0))
+            y = tb_pos.y() + (tb.height() - self.height()) // 2 - 4
+        else:
+            y = 7 
+
+        self.move(x, y)
         self.raise_()
 
     def mousePressEvent(self, _event):

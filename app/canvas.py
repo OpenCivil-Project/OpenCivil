@@ -94,6 +94,7 @@ class MCanvas3D(gl.GLViewWidget):
         self.static_items = []      
         self.node_items = []         
         self.element_items = []
+        self.load_items = []
         self._sel_overlay_items = []      
         self.last_selection_state = {'nodes': [], 'elements': [], 'blink': True}
 
@@ -196,13 +197,31 @@ class MCanvas3D(gl.GLViewWidget):
         
         t_az, t_el, t_fov = -45, 30, 60
         
-        if view_name == "ISO": t_az, t_el, t_fov = -135, 30, 0; target_dist = max_dim * 4.0
+        import math
+
+        if view_name == "ISO":
+            t_az, t_el, t_fov = -135, 35.264, 1
+            fov_scale = math.tan(math.radians(30)) / math.tan(math.radians(t_fov / 2))
+            target_dist = max_dim * 1.5 * fov_scale
         elif view_name == "3D": t_az, t_el, t_fov = -135, 30, 60
         elif view_name == "XY": t_az, t_el, t_fov = -90, 90, 0; target_dist = max_dim * 1.5
         elif view_name == "XZ": t_az, t_el, t_fov = -90, 0, 0; target_dist = max_dim * 1.5
         elif view_name == "YZ": t_az, t_el, t_fov = 180, 0, 0; target_dist = max_dim * 1.5
 
-        self.opts['fov'] = t_fov
+        if t_fov == 0:
+
+            self.opts['fov'] = 60
+            try: self.camera.anim.finished.disconnect()
+            except: pass
+            def _apply_ortho():
+                self.opts['fov'] = 0.0
+                self.update()
+            self.camera.anim.finished.connect(_apply_ortho)
+        else:
+            try: self.camera.anim.finished.disconnect()
+            except: pass
+            self.opts['fov'] = t_fov
+
         self.camera.animate_to(target_center, target_dist, t_az, t_el)
 
     def draw_model(self, model, sel_elems=None, sel_nodes=None):
@@ -291,7 +310,6 @@ class MCanvas3D(gl.GLViewWidget):
         self.selected_element_ids = list(sel_elems) if sel_elems is not None else []
         self.selected_node_ids = list(sel_nodes) if sel_nodes is not None else []
         
-        # 1. Clear yellow selection highlight
         for item in self._sel_overlay_items:
             try:
                 self.removeItem(item)
@@ -299,7 +317,6 @@ class MCanvas3D(gl.GLViewWidget):
                 pass
         self._sel_overlay_items = []
 
-        # 2. NEW: Clear old loads to prepare for selected state
         if not hasattr(self, 'load_items'): self.load_items = []
         for item in self.load_items:
             try: self.removeItem(item)
@@ -307,7 +324,6 @@ class MCanvas3D(gl.GLViewWidget):
         self.load_items.clear()
         self.load_labels.clear()
 
-        # 3. Rebuild overlays and loads dynamically
         if self.current_model:
             self._rebuild_selection_overlay()
             
@@ -1384,7 +1400,6 @@ class MCanvas3D(gl.GLViewWidget):
                     d = axis_vec * (1 if val > 0 else -1)
                     add_arrow(origin, d, color, is_moment)
                     
-                    # Remove 'if is_selected:' and unconditionally add the label
                     l_type = "Moment" if is_moment else "Force"
                     self._add_load_label(origin, d, val, l_type, color, owner_id=node.id, owner_type='node')
 
@@ -2549,28 +2564,25 @@ class MCanvas3D(gl.GLViewWidget):
                 val = raw_w[axis_idx]
                 if abs(val) < 1e-6: continue
 
-                # Calculate Visual Scale
                 magnitude = max(1.0, abs(val))
                 scale = min(1.5, 0.5 + (np.log10(magnitude) * 0.2))
                 sign = 1 if val > 0 else -1
                 
-                # --- COLOR PALETTE ---
                 if load.coord_system == "Local":
                     load_vec = [v1_ax, v2_ax, v3_ax][axis_idx]
-                    base_rgb = (0.1, 0.1, 0.1) # Black/Dark Grey for Local
+                    base_rgb = (0.1, 0.1, 0.1)                            
                 else:         
                     load_vec = np.zeros(3); load_vec[axis_idx] = 1.0  
                     if axis_idx == 2 and sign < 0:
-                        base_rgb = (0.2, 0.5, 0.9) # Blue for Gravity
+                        base_rgb = (0.2, 0.5, 0.9)                   
                     else:
                         base_rgb = (0.4, 0.4, 0.4)
                 
-                c_ghost      = (*base_rgb, 0.15) # Very faint background curtain
-                c_ghost_line = (*base_rgb, 0.30) # Faint top edge
-                c_sel_fill   = (*base_rgb, 0.40) # Darker curtain when selected
-                c_line       = (*base_rgb, 1.00) # Solid vivid arrows when selected
+                c_ghost      = (*base_rgb, 0.15)                                
+                c_ghost_line = (*base_rgb, 0.30)                 
+                c_sel_fill   = (*base_rgb, 0.40)                               
+                c_line       = (*base_rgb, 1.00)                                   
 
-                # Vector Math for Coordinates
                 offset_vec = -1 * sign * load_vec * scale 
                 cross_prod = np.cross(beam_dir, load_vec)
                 is_parallel = np.linalg.norm(cross_prod) < 0.01
@@ -2581,25 +2593,18 @@ class MCanvas3D(gl.GLViewWidget):
                 pt_top_1  = p1 + offset_vec + visual_shift
                 pt_top_2  = p2 + offset_vec + visual_shift
 
-                # =========================================================
-                # UNSELECTED STATE: Clean "Gist" 
-                # =========================================================
                 if not is_selected:
-                    # Faint Curtain
+                                   
                     ghost_verts.extend([pt_base_1, pt_base_2, pt_top_2, pt_top_1])
                     idx = ghost_idx_counter
                     ghost_faces.extend([[idx, idx+1, idx+2], [idx, idx+2, idx+3]])
                     for _ in range(4): ghost_colors.append(c_ghost)
                     ghost_idx_counter += 4
                     
-                    # Faint Top Edge (Helps define the shape without clutter)
                     ghost_lines.extend([pt_top_1, pt_top_2])
                     ghost_line_colors.extend([c_ghost_line, c_ghost_line])
                     continue 
 
-                # =========================================================
-                # SELECTED STATE: Full Detail (Text, Arrows, Outlines)
-                # =========================================================
                 display_val = val * unit_registry.force_scale / unit_registry.length_scale
                 mid_height = (pt_top_1 + pt_top_2) / 2
                 self.load_labels.append({
@@ -2609,18 +2614,15 @@ class MCanvas3D(gl.GLViewWidget):
                     'color': c_line                                         
                 })
 
-                # Darker Curtain
                 sel_verts.extend([pt_base_1, pt_base_2, pt_top_2, pt_top_1])
                 idx = sel_idx_counter
                 sel_faces.extend([[idx, idx+1, idx+2], [idx, idx+2, idx+3]])
                 for _ in range(4): sel_colors.append(c_sel_fill)
                 sel_idx_counter += 4
 
-                # Full Outline
                 sel_lines.extend([pt_top_1, pt_top_2, pt_top_1, pt_base_1, pt_top_2, pt_base_2])
                 sel_line_colors.extend([c_line] * 6)
 
-                # Draw 5 distinctly spaced arrows
                 num_arrows = 5
                 arrow_dir = -sign * load_vec 
                 arrow_len = scale * 0.9
@@ -2644,7 +2646,6 @@ class MCanvas3D(gl.GLViewWidget):
                     pt_tip = pt_base_1 + t * (pt_base_2 - pt_base_1)
                     add_arrow(pt_tip, arrow_dir, c_line)
 
-        # --- OpenGL Drawing Blocks ---
         if ghost_verts:
             mesh_ghost = gl.GLMeshItem(
                 vertexes=np.array(ghost_verts, dtype=np.float32), faces=np.array(ghost_faces, dtype=np.int32),

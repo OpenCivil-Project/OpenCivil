@@ -53,6 +53,13 @@ class GoogleAuthManager:
 
         return False
 
+    def restore_session(self) -> bool:
+        """
+        Silent credential restore for secondary windows.
+        No UI shown. Returns True if a valid session was found on disk.
+        """
+        return self._load_saved_credentials()
+
     def logout(self):
         """Clear session and remove saved credentials."""
         self.user_info   = None

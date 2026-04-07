@@ -244,6 +244,12 @@ class SolidDataManager:
         if t == 'i_section':    return max(float(sec.get('w_top', 0.3)), float(sec.get('w_bot', 0.3))), float(sec.get('h', 0.3))
         if t == 'tube':         return float(sec.get('b', 0.3)), float(sec.get('d', 0.3))
         if t == 'trapezoidal':  return max(float(sec.get('w_top', 0.3)), float(sec.get('w_bot', 0.3))), float(sec.get('d', 0.3))
+        if t == 'arbitrary':
+            verts = sec.get('vertices', [])
+            if verts:
+                ys = [v[0] for v in verts]
+                zs = [v[1] for v in verts]
+                return float(max(ys) - min(ys)), float(max(zs) - min(zs))
         return float(sec.get('b', 0.3)), float(sec.get('h', 0.3))
 
     def _parse_materials(self):

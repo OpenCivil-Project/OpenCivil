@@ -10,7 +10,10 @@ from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QPolygonF
 from core.units import unit_registry
 from core.properties import (RectangularSection, ISection, Material, 
                              GeneralSection, CircularSection, 
-                             PipeSection, TubeSection, TrapezoidalSection)
+                             PipeSection, TubeSection, TrapezoidalSection,
+                             ArbitrarySection)
+from app.section_designer.section_designer_dialog import SectionDesignerDialog
+
 class AISCSelectionDialog(QDialog):
     """Dialog to select a specific shape from the loaded AISC list."""
     def __init__(self, shape_list, parent=None):
@@ -197,6 +200,25 @@ class SectionPreviewWidget(QFrame):
             ])
             painter.drawPolygon(poly)
 
+        elif p["type"] == "arbitrary":
+            verts = p.get("vertices", [])
+            if not verts:
+                painter.setPen(QPen(Qt.GlobalColor.gray, 1, Qt.PenStyle.DashLine))
+                painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Arbitrary\n(No Preview)")
+            else:
+                ys = [v[0] for v in verts]
+                zs = [v[1] for v in verts]
+                span = max(max(ys) - min(ys), max(zs) - min(zs))
+                if span > 0:
+                    sc = 140.0 / span
+                    cy_off = (min(ys) + max(ys)) / 2
+                    cz_off = (min(zs) + max(zs)) / 2
+                    poly = QPolygonF([
+                        QPointF(cx + (v[0] - cy_off) * sc, cy - (v[1] - cz_off) * sc)
+                        for v in verts
+                    ])
+                    painter.drawPolygon(poly)
+
         painter.setBrush(Qt.GlobalColor.red)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(QPointF(cx, cy), 3, 3)
@@ -338,6 +360,10 @@ class AddSectionDialog(QDialog):
         ])               
         form.addRow("Shape:", self.type_combo)
 
+        self.btn_designer = QPushButton("Section Designer (Beta)…")
+        self.btn_designer.clicked.connect(self._open_section_designer)
+        form.addRow("", self.btn_designer)
+
         self.btn_color = QPushButton()
         self.btn_color.setFixedSize(50, 25)
         top.addLayout(form, 1)
@@ -460,6 +486,13 @@ class AddSectionDialog(QDialog):
     def on_type_changed(self, idx):
         self.stack.setCurrentIndex(idx)
         self.update_preview()
+
+    def _open_section_designer(self):
+        existing = self.section_data if isinstance(self.section_data, ArbitrarySection) else None
+        dlg = SectionDesignerDialog(self.model, section_data=existing, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.model.add_section(dlg.result_section)
+            self.accept()
 
     def update_preview(self):
         idx = self.type_combo.currentIndex()
@@ -599,6 +632,22 @@ class AddSectionDialog(QDialog):
             self.trap_btop_spin.setValue(self.section_data.w_top * scale)
             self.trap_bbot_spin.setValue(self.section_data.w_bot * scale)
         
+        elif isinstance(self.section_data, ArbitrarySection):
+                                                                       
+            self.type_combo.setEnabled(False)
+            self.stack.setEnabled(False)
+            self.mat_combo.setEnabled(False)
+            self.name_edit.setEnabled(False)
+            self.btn_ok.setEnabled(False)
+            self.btn_designer.setText("Open in Section Designer…")
+                                                                    
+            self.preview_widget.update_params({
+                "type": "arbitrary",
+                "color": self.selected_color,
+                "vertices": self.section_data.get_shape_coords(),
+            })
+            return                            
+
         elif isinstance(self.section_data, GeneralSection):
             self.type_combo.setCurrentIndex(6)
             scale = unit_registry.length_scale
@@ -879,7 +928,19 @@ class SectionManagerDialog(QDialog):
         if not item: return
         name = item.text()
         sec = self.model.sections.get(name)
-        if sec and AddSectionDialog(self.model, parent=self, section_data=sec).exec():
+        if not sec: return
+
+        if isinstance(sec, ArbitrarySection):
+                                                                       
+            dlg = SectionDesignerDialog(self.model, section_data=sec, parent=self)
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                result = dlg.result_section
+                self.model.sections[result.name] = result
+                for el in self.model.elements.values():
+                    if el.section.name == name:
+                        el.section = result
+                self.refresh_list()
+        elif AddSectionDialog(self.model, parent=self, section_data=sec).exec():
             self.refresh_list()
 
     def delete_section(self):

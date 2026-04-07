@@ -2,8 +2,8 @@ import sys
 import json
 import os
 import numpy as np
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTabWidget, QTableWidget, 
-                             QTableWidgetItem, QHeaderView, QLabel, QWidget)
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QTableWidget, 
+                             QTableWidgetItem, QHeaderView, QLabel, QWidget, QComboBox, QSlider)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
@@ -72,16 +72,18 @@ class FBDViewerDialog(QDialog):
     COLORS = {
         'beam': '#000000',                  
         'node': '#000000',                   
-        'axial': '#D32F2F',                    
-        'shear': '#1976D2',                     
-        'moment': '#388E3C',                       
-        'torsion': '#7B1FA2'                        
+        'axial': '#000000',                    
+        'shear': "#000000",                     
+        'moment': '#000000',                       
+        'torsion': '#000000',
+        'deflection': '#000000'                                        
     }
     
     def __init__(self, element_id, model, results_path, matrices_path, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Element {element_id} - Free Body Diagrams")
-        self.resize(1000, 700)
+        self.resize(900, 700)
+        self.setMinimumSize(900, 700)
         
         self.element_id = str(element_id)
         self.model = model
@@ -93,8 +95,9 @@ class FBDViewerDialog(QDialog):
         self.beam_length_display = unit_registry.to_display_length(self.beam_length)
         
         self.forces_base = self.calculate_forces()
-        
         self.forces = self._convert_forces_to_display()
+        
+        self._nvm_cache = self._calculate_nvm_data() if self.forces_base is not None else None
         
         self.force_unit = unit_registry.force_unit_name
         self.length_unit = unit_registry.length_unit_name
@@ -113,19 +116,16 @@ class FBDViewerDialog(QDialog):
         layout.addWidget(self.tabs)
         
         self.add_axial_tab()
-
         self.add_Minor_axis_tab()
-
         self.add_Major_axis_tab()
-
         self.add_torsion_tab()
+        self.add_nvm_tab()
 
     def _load_json(self, path):
         if not os.path.exists(path): return {}
         with open(path, 'r') as f: return json.load(f)
 
     def calculate_forces(self):
-        """Calculate forces in BASE units (Newtons, Newton-meters)"""
         if self.element_id not in self.matrices: return None
         if int(self.element_id) not in self.model.elements: return None
 
@@ -135,40 +135,434 @@ class FBDViewerDialog(QDialog):
         fef = np.array(self.matrices[self.element_id]['fef'])
         
         n1, n2 = str(el.node_i.id), str(el.node_j.id)
-        u1 = self.results['displacements'].get(n1, [0]*6)
-        u2 = self.results['displacements'].get(n2, [0]*6)
+        
+        base_dict = self.results.get("_base_displacements", self.results.get("displacements", {}))
+        u1 = base_dict.get(n1, [0]*6)
+        u2 = base_dict.get(n2, [0]*6)
+        
         u_global = np.array(u1 + u2)
 
         return k @ (t @ u_global) + fef
 
     def _convert_forces_to_display(self):
-        """Convert forces from BASE (N, N·m) to DISPLAY units (kN, kN·m, etc.)"""
-        if self.forces_base is None:
-            return None
+        if self.forces_base is None: return None
         
         forces_display = np.zeros(12)
-        
         for i in range(12):
             if i % 6 < 3:                                 
                 forces_display[i] = unit_registry.to_display_force(self.forces_base[i])
             else:                                  
-                                                                                                
                 forces_display[i] = unit_registry.to_display_force(self.forces_base[i])
-        
         return forces_display
+
+    def _calculate_nvm_data(self):
+        L = self.beam_length
+        Defl_2_Abs = np.zeros(101); Defl_3_Abs = np.zeros(101)
+        stations = np.linspace(0, L, 101)
+        
+        Fx1, Fy1, Fz1, Mx1, My1, Mz1 = self.forces_base[0:6]
+        
+        t_matrix = np.array(self.matrices[self.element_id]['t'])
+        R_3x3 = t_matrix[0:3, 0:3] 
+        
+        el = self.element
+        n1 = str(el.node_i.id)
+        n2 = str(el.node_j.id)
+        base_dict = self.results.get("_base_displacements", self.results.get("displacements", {}))
+        u1_disp = base_dict.get(n1, [0.0]*6)
+        u2_disp = base_dict.get(n2, [0.0]*6)
+        u_global = np.array(u1_disp + u2_disp)
+        
+        u_local = t_matrix @ u_global
+        u1, v1, w1, thx1, thy1, thz1 = u_local[0:6]
+        u2, v2, w2, thx2, thy2, thz2 = u_local[6:12]
+        
+        w_loc = np.zeros(3)
+        point_loads = []
+
+        active_case_name = self.results.get("info", {}).get("case_name", "")
+        
+        if active_case_name in self.model.load_cases:
+            active_case = self.model.load_cases[active_case_name]
+            
+            for pat_name, scale_factor in active_case.loads:
+                if pat_name in self.model.load_patterns:
+                    pat = self.model.load_patterns[pat_name]
+                    
+                    if pat.self_weight_multiplier > 0:
+                                                                              
+                        area = getattr(self.element.section, 'A', 0)
+                        density = getattr(self.element.section.material, 'density', 0)
+                        
+                        w_sw_mag = area * density * pat.self_weight_multiplier * scale_factor
+                        
+                        w_sw_global = np.array([0.0, 0.0, -w_sw_mag])
+                        w_sw_local = R_3x3 @ w_sw_global
+                        
+                        w_loc += w_sw_local
+        
+        for load in self.model.loads:
+            if getattr(load, 'element_id', None) == int(self.element_id):
+                is_local = getattr(load, 'coord_system', 'Global').lower() == 'local'
+                
+                if hasattr(load, 'wx'): 
+                    w_vec = np.array([load.wx, load.wy, load.wz])
+                    if not is_local: w_vec = R_3x3 @ w_vec
+                    w_loc += w_vec
+                    
+                elif hasattr(load, 'force'): 
+                    a = load.dist * L if getattr(load, 'is_relative', False) else load.dist
+                    dir_map = {'X': 0, 'Y': 1, 'Z': 2, '1': 0, '2': 1, '3': 2}
+                    idx = dir_map.get(str(getattr(load, 'direction', 'Z')).upper(), 2)
+                    
+                    vec = np.zeros(3)
+                    vec[idx] = load.force
+                    if not is_local: vec = R_3x3 @ vec
+                    
+                    l_type = getattr(load, 'load_type', 'Force').lower()
+                    if l_type == 'moment': point_loads.append({'a': a, 'F': np.zeros(3), 'M': vec})
+                    else: point_loads.append({'a': a, 'F': vec, 'M': np.zeros(3)})
+        
+        P = np.zeros(101)
+        V2 = np.zeros(101); M3 = np.zeros(101)
+        V3 = np.zeros(101); M2 = np.zeros(101)
+        Defl_2_Rel = np.zeros(101); Defl_3_Rel = np.zeros(101)
+        
+        for i, x in enumerate(stations):
+            xi = x / L if L > 0 else 0
+            
+            P[i] = -Fx1 - w_loc[0] * x
+            V2[i] = -(Fy1 + w_loc[1] * x)
+            V3[i] = -(Fz1 + w_loc[2] * x)
+            
+            M3[i] = Mz1 + Fy1 * x + w_loc[1] * (x**2) / 2.0
+            M2[i] = My1 + Fz1 * x + w_loc[2] * (x**2) / 2.0
+            
+            for pl in point_loads:
+                a = pl['a']
+                if x > a:
+                    dist_x = x - a
+                    P[i] -= pl['F'][0]
+                    V2[i] -= pl['F'][1]                              
+                    V3[i] -= pl['F'][2]                              
+                    M3[i] += pl['F'][1] * dist_x - pl['M'][2]
+                    M2[i] += pl['F'][2] * dist_x - pl['M'][1]
+            
+            N1 = 1 - 3*xi**2 + 2*xi**3
+            N2 = x * (1 - 2*xi + xi**2)
+            N3 = 3*xi**2 - 2*xi**3
+            N4 = x * (xi**2 - xi)
+            
+            defl_2_abs = N1*v1 + N2*thz1 + N3*v2 + N4*thz2
+            defl_3_abs = N1*w1 + N2*(-thy1) + N3*w2 + N4*(-thy2) 
+            
+            chord_2 = v1 + (v2 - v1) * xi
+            chord_3 = w1 + (w2 - w1) * xi
+            
+            E = getattr(self.element.section.material, 'E', 1.0)
+            I33 = getattr(self.element.section, 'I33', 1.0)
+            I22 = getattr(self.element.section, 'I22', 1.0)
+            
+            defl_bubble_2 = (w_loc[1] * (x**2) * ((L - x)**2)) / (24 * E * I33) if I33 > 0 else 0
+            defl_bubble_3 = (w_loc[2] * (x**2) * ((L - x)**2)) / (24 * E * I22) if I22 > 0 else 0
+            
+            Defl_2_Rel[i] = (defl_2_abs - chord_2) + defl_bubble_2
+            Defl_3_Rel[i] = (defl_3_abs - chord_3) + defl_bubble_3
+
+            Defl_2_Abs[i] = defl_2_abs + defl_bubble_2
+            Defl_3_Abs[i] = defl_3_abs + defl_bubble_3
+            
+        return stations, P, V2, V3, M2, M3, Defl_2_Rel, Defl_3_Rel, Defl_2_Abs, Defl_3_Abs
+    
+    def add_nvm_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        self.nvm_fig = Figure(figsize=(8, 5.5), dpi=100, facecolor='white')
+        self.nvm_canvas = FigureCanvas(self.nvm_fig)
+        self.nvm_canvas.mpl_connect('resize_event', self._on_canvas_resize)
+        layout.addWidget(self.nvm_canvas)
+
+        _combo_style = """
+            QComboBox {
+                padding: 4px 10px; border: 1px solid #c0c0c0; border-radius: 4px;
+                background-color: #ffffff; font-size: 10pt; color: #333; min-height: 25px;
+            }
+        """
+
+        self.nvm_combo = QComboBox()
+        self.nvm_combo.addItems(["Minor Axis (P, V3, M2, Deflection)", "Major Axis (P, V2, M3, Deflection)"])
+        self.nvm_combo.setStyleSheet(_combo_style)
+        
+        self.defl_combo = QComboBox()
+        self.defl_combo.addItems(["Relative to Beam Ends", "Absolute"])
+        self.defl_combo.setStyleSheet(_combo_style)
+
+        combo_layout = QHBoxLayout()
+        combo_layout.addWidget(self.nvm_combo)
+        combo_layout.addWidget(self.defl_combo)
+        combo_layout.addStretch()                          
+        layout.addLayout(combo_layout)
+
+        slider_widget = QWidget()
+        self.slider_layout = QHBoxLayout(slider_widget)
+        self.slider_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.nvm_slider = QSlider(Qt.Orientation.Horizontal)
+        self.nvm_slider.setRange(0, 100)
+        self.nvm_slider.setValue(0)
+        
+        self.nvm_slider.setStyleSheet("""
+            QSlider::groove:horizontal { height: 6px; background: #d0d0d0; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #2980b9; border: 1px solid #1c5e8a;
+                                         width: 16px; height: 16px; margin: -5px 0; border-radius: 8px; }
+            QSlider::sub-page:horizontal { background: #2980b9; border-radius: 3px; }
+        """)
+        self.slider_layout.addWidget(self.nvm_slider)
+        layout.addWidget(slider_widget)
+
+        self.nvm_val_label = QLabel("Move the slider to inspect values at any position along the beam.")
+        self.nvm_val_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.nvm_val_label.setStyleSheet(
+            "font-size: 9pt; color: #154360; padding: 4px 8px; "
+            "background: #ffffff; border: 1px solid #a9cce3; border-radius: 4px;"
+        )
+        layout.addWidget(self.nvm_val_label)
+
+        self.tabs.addTab(tab, "NVM & Deflection")
+
+        self._nvm_axes   = None                         
+        self._nvm_arrays = None                                         
+        self._nvm_vlines = []                                  
+
+        self.nvm_combo.currentIndexChanged.connect(self.update_nvm_plot)
+        self.defl_combo.currentIndexChanged.connect(self.update_nvm_plot)
+        self.nvm_slider.valueChanged.connect(self._update_nvm_slider)
+
+        self.update_nvm_plot()
+
+    def _on_canvas_resize(self, event):
+        """Rebuild the background cache if the window resizes to prevent graphical tearing."""
+        if not hasattr(self, '_nvm_vlines') or not self._nvm_vlines: return
+            
+        for vl in self._nvm_vlines:
+            vl.set_visible(False)
+            
+        self.nvm_canvas.draw()
+        self._bg_cache = self.nvm_canvas.copy_from_bbox(self.nvm_fig.bbox)
+        
+        for vl in self._nvm_vlines:
+            vl.set_visible(True)
+            
+        self._sync_slider_layout()
+        
+    def _sync_slider_layout(self):
+        """Align the QSlider handle exactly with the Matplotlib axes."""
+        if not hasattr(self, '_nvm_axes') or not self._nvm_axes: return
+        bbox = self._nvm_axes[3].get_position() 
+        canvas_w = self.nvm_canvas.width()
+        left_margin = max(0, int(bbox.x0 * canvas_w) - 8)
+        right_margin = max(0, int(canvas_w - (bbox.x1 * canvas_w)) - 8)
+        self.slider_layout.setContentsMargins(left_margin, 0, right_margin, 0)
+
+    def update_nvm_plot(self):
+        if self.forces_base is None: return
+        self.nvm_fig.clear()
+
+        self.nvm_fig.subplots_adjust(right=0.95, left=0.1, hspace=0.45)
+
+        stations, P, V2, V3, M2, M3, Defl_2_Rel, Defl_3_Rel, Defl_2_Abs, Defl_3_Abs = self._calculate_nvm_data()
+
+        L_scale = getattr(unit_registry, 'length_scale', 1.0)
+        def to_F(v): return np.array([unit_registry.to_display_force(x) for x in v])
+        def to_M(v): return np.array([unit_registry.to_display_force(x) * L_scale for x in v])
+        def to_L(v): return np.array([unit_registry.to_display_length(x) for x in v])
+
+        is_absolute = self.defl_combo.currentIndex() == 1
+
+        idx = self.nvm_combo.currentIndex()
+        if idx == 0:
+            shear  = to_F(V2);  moment = to_M(M3)
+            defl   = to_L(Defl_2_Abs) if is_absolute else to_L(Defl_2_Rel)
+            shear_lbl = f'Shear Force (V2) [{self.force_unit}]'
+            mom_lbl   = f'Bending Moment (M3) [{self.moment_unit}]'
+            defl_lbl  = f'{"Absolute" if is_absolute else "Relative"} Deflection (u2) [{self.length_unit}]'
+        else:
+            shear  = to_F(V3);  moment = to_M(M2)
+            defl   = to_L(Defl_3_Abs) if is_absolute else to_L(Defl_3_Rel)
+            shear_lbl = f'Shear Force (V3) [{self.force_unit}]'
+            mom_lbl   = f'Bending Moment (M2) [{self.moment_unit}]'
+            defl_lbl  = f'{"Absolute" if is_absolute else "Relative"} Deflection (u3) [{self.length_unit}]'
+
+        axial  = to_F(P)
+        x_disp = stations * L_scale
+
+        self._nvm_arrays = (x_disp, axial, shear, moment, defl)
+
+        C_POS  = '#4a90d9'                               
+        C_NEG  = '#d9534f'                                   
+        C_LINE = '#1a252f'                       
+        C_ZERO = '#888888'
+
+        def fill_signed(ax, x, y):
+            ax.plot(x, y, color=C_LINE, linewidth=1.8, zorder=3)
+            ax.fill_between(x, 0, y, where=(y >= 0), color=C_POS, alpha=0.55, interpolate=True)
+            ax.fill_between(x, 0, y, where=(y <  0), color=C_NEG, alpha=0.55, interpolate=True)
+
+        ax1 = self.nvm_fig.add_subplot(411)
+        fill_signed(ax1, x_disp, axial)
+        ax1.axhline(0, color=C_ZERO, linewidth=0.8)
+        ax1.set_title(f'Axial Force (P) [{self.force_unit}]', fontsize=9, fontweight='bold')
+        ax1.grid(True, linestyle='--', alpha=0.5)
+
+        ax2 = self.nvm_fig.add_subplot(412)
+        fill_signed(ax2, x_disp, shear)
+        ax2.axhline(0, color=C_ZERO, linewidth=0.8)
+        ax2.set_title(shear_lbl, fontsize=9, fontweight='bold')
+        ax2.grid(True, linestyle='--', alpha=0.5)
+
+        ax3 = self.nvm_fig.add_subplot(413)
+        fill_signed(ax3, x_disp, moment)
+        ax3.axhline(0, color=C_ZERO, linewidth=0.8)
+        ax3.set_title(mom_lbl, fontsize=9, fontweight='bold')
+        ax3.grid(True, linestyle='--', alpha=0.5)
+        ax3.invert_yaxis()
+
+        ax4 = self.nvm_fig.add_subplot(414)
+        ax4.plot(x_disp, defl, color='#2c3e50', linewidth=2.2, zorder=3)
+        ax4.axhline(0, color=C_ZERO, linewidth=0.8, linestyle='--')
+        ax4.set_title(defl_lbl, fontsize=9, fontweight='bold')
+        ax4.grid(True, linestyle='--', alpha=0.5)
+
+        self._nvm_axes = (ax1, ax2, ax3, ax4)
+
+        vline_kw = dict(color='#2980b9', linewidth=1.5, linestyle='--', zorder=6)
+        self._nvm_vlines = [ax.axvline(x_disp[0], **vline_kw) for ax in self._nvm_axes]
+
+        self.nvm_fig.tight_layout()
+
+        for vl in self._nvm_vlines:
+            vl.set_visible(False)
+        
+        self.nvm_canvas.draw()
+        self._bg_cache = self.nvm_canvas.copy_from_bbox(self.nvm_fig.bbox)
+        
+        for vl in self._nvm_vlines:
+            vl.set_visible(True)
+                                             
+        self._sync_slider_layout()
+        self._update_nvm_slider(self.nvm_slider.value())
+                                             
+        def sync_slider_width():
+            if not self._nvm_axes: return
+            bbox = self._nvm_axes[3].get_position() 
+            canvas_w = self.nvm_canvas.width()
+            
+            left_margin = int(bbox.x0 * canvas_w) - 8
+            right_margin = int(canvas_w - (bbox.x1 * canvas_w)) - 8
+            
+            left_margin = max(0, left_margin)
+            right_margin = max(0, right_margin)
+            
+            self.slider_layout.setContentsMargins(left_margin, 0, right_margin, 0)
+
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(50, sync_slider_width)
+
+        self._update_nvm_slider(self.nvm_slider.value())
+
+    def _update_nvm_slider(self, value):
+        """Move the inspection line across all 4 NVM plots with zero lag."""
+        if self._nvm_arrays is None or self._nvm_axes is None:
+            return
+
+        x_disp, axial, shear, moment, defl = self._nvm_arrays
+        station_idx = int(np.clip(value, 0, len(x_disp) - 1))
+        x_val = x_disp[station_idx]
+
+        p_val = axial[station_idx]
+        v_val = shear[station_idx]
+        m_val = moment[station_idx]
+        d_val = defl[station_idx]
+
+        self.nvm_val_label.setText(
+            f"x = {x_val:.3f} {self.length_unit}  │  "
+            f"P = {p_val:+.4f} {self.force_unit}  │  "
+            f"V = {v_val:+.4f} {self.force_unit}  │  "
+            f"M = {m_val:+.4f} {self.moment_unit}  │  "
+            f"δ = {d_val:+.6f} {self.length_unit}"
+        )
+
+        try:
+            if hasattr(self, '_bg_cache'):
+                self.nvm_canvas.restore_region(self._bg_cache)
+                for vl in self._nvm_vlines:
+                    vl.set_xdata([x_val, x_val])
+                    vl.axes.draw_artist(vl)
+                self.nvm_canvas.blit(self.nvm_fig.bbox)
+                self.nvm_canvas.flush_events()
+            else:
+                raise ValueError
+        except ValueError:
+            for vl in self._nvm_vlines:
+                vl.set_xdata([x_val, x_val])
+            self.nvm_canvas.draw_idle()
+
+    def _nvm_endpoints(self):
+        """Return display-unit NVM values at x=0 (i) and x=L (j).
+        Returns dict with keys: P_i, P_j, V2_i, V2_j, V3_i, V3_j,
+                                M2_i, M2_j, M3_i, M3_j  (all in display units)
+        """
+        if self._nvm_cache is None:
+            return None
+        stations, P, V2, V3, M2, M3, *_ = self._nvm_cache
+        L_scale = getattr(unit_registry, 'length_scale', 1.0)
+        def fF(v): return unit_registry.to_display_force(v)
+        def fM(v): return unit_registry.to_display_force(v) * L_scale
+        return dict(
+            P_i=fF(P[0]),   P_j=fF(P[-1]),
+            V2_i=fF(V2[0]), V2_j=fF(V2[-1]),
+            V3_i=fF(V3[0]), V3_j=fF(V3[-1]),
+            M2_i=fM(M2[0]), M2_j=fM(M2[-1]),
+            M3_i=fM(M3[0]), M3_j=fM(M3[-1]),
+        )
+
+    def _add_value_table(self, ax_table, rows, col_labels=('Location', 'Symbol', 'Value', 'Unit')):
+        """Render a clean summary table in the given axes."""
+        ax_table.axis('off')
+        tbl = ax_table.table(
+            cellText=rows,
+            colLabels=col_labels,
+            loc='center',
+            cellLoc='center'
+        )
+        tbl.auto_set_font_size(False)
+        tbl.set_fontsize(10)
+        tbl.scale(1, 1.8)
+                          
+        for c in range(len(col_labels)):
+            cell = tbl[0, c]
+            cell.set_facecolor('#2c3e50')
+            cell.set_text_props(color='white', fontweight='bold')
+                               
+        for r in range(1, len(rows) + 1):
+            for c in range(len(col_labels)):
+                tbl[r, c].set_facecolor('#f0f4f8' if r % 2 == 0 else 'white')
 
     def add_axial_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
-        figure = Figure(figsize=(8, 4), dpi=100, facecolor='white')
+        figure = Figure(figsize=(8, 5), dpi=100, facecolor='white', layout='constrained')
         canvas = FigureCanvas(figure)
         layout.addWidget(canvas)
         self.tabs.addTab(tab, "Axial Force (P)")
 
         if self.forces is None: return
 
-        ax = figure.add_subplot(111)
+        gs = figure.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.05)
+        ax = figure.add_subplot(gs[0])
+        ax_table = figure.add_subplot(gs[1])
         
         L_display = self.beam_length_display
         L_norm = 10                                 
@@ -193,21 +587,30 @@ class FBDViewerDialog(QDialog):
         ax.set_title(f'Axial Force Diagram (Fx) [{self.force_unit}]', 
                     fontsize=12, fontweight='bold', pad=20)
         
-        figure.tight_layout()
+        nvm = self._nvm_endpoints()
+        p_i = nvm['P_i'] if nvm else abs(unit_registry.to_display_force(self.forces_base[0]))
+        p_j = nvm['P_j'] if nvm else abs(unit_registry.to_display_force(self.forces_base[6]))
+        self._add_value_table(ax_table, [
+            [f'i  (x = 0.00 {self.length_unit})',  'P', f'{abs(p_i):.4f}', self.force_unit],
+            [f'j  (x = {L_display:.2f} {self.length_unit})', 'P', f'{abs(p_j):.4f}', self.force_unit],
+        ])
+        
         canvas.draw()
 
     def add_Minor_axis_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
-        figure = Figure(figsize=(8, 5), dpi=100, facecolor='white')
+        figure = Figure(figsize=(8, 6), dpi=100, facecolor='white', layout='constrained')
         canvas = FigureCanvas(figure)
         layout.addWidget(canvas)
         self.tabs.addTab(tab, "Minor Axis (V3-M2)")
 
         if self.forces is None: return
 
-        ax = figure.add_subplot(111)
+        gs = figure.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.05)
+        ax = figure.add_subplot(gs[0])
+        ax_table = figure.add_subplot(gs[1])
         
         L_display = self.beam_length_display
         L_norm = 10
@@ -238,21 +641,34 @@ class FBDViewerDialog(QDialog):
         ax.set_title(f'Minor Axis Bending - Fy [{self.force_unit}], Mz [{self.moment_unit}]', 
                     fontsize=12, fontweight='bold', pad=20)
         
-        figure.tight_layout()
+        nvm = self._nvm_endpoints()
+        v2_i = nvm['V2_i'] if nvm else abs(self.forces[1])
+        v2_j = nvm['V2_j'] if nvm else abs(self.forces[7])
+        m3_i = nvm['M3_i'] if nvm else abs(self.forces[5])
+        m3_j = nvm['M3_j'] if nvm else abs(self.forces[11])
+        self._add_value_table(ax_table, [
+            [f'i  (x = 0.00 {self.length_unit})',  'V3', f'{abs(v2_i):.4f}', self.force_unit],
+            [f'j  (x = {L_display:.2f} {self.length_unit})', 'V3', f'{abs(v2_j):.4f}', self.force_unit],
+            [f'i  (x = 0.00 {self.length_unit})',  'M2', f'{abs(m3_i):.4f}', self.moment_unit],
+            [f'j  (x = {L_display:.2f} {self.length_unit})', 'M2', f'{abs(m3_j):.4f}', self.moment_unit],
+        ])
+        
         canvas.draw()
 
     def add_Major_axis_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
-        figure = Figure(figsize=(8, 5), dpi=100, facecolor='white')
+        figure = Figure(figsize=(8, 6), dpi=100, facecolor='white', layout='constrained')
         canvas = FigureCanvas(figure)
         layout.addWidget(canvas)
         self.tabs.addTab(tab, "Major Axis (M3-V2)")
 
         if self.forces is None: return
 
-        ax = figure.add_subplot(111)
+        gs = figure.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.05)
+        ax = figure.add_subplot(gs[0])
+        ax_table = figure.add_subplot(gs[1])
         
         L_display = self.beam_length_display
         L_norm = 10
@@ -283,21 +699,34 @@ class FBDViewerDialog(QDialog):
         ax.set_title(f'Major Axis Bending - Fz [{self.force_unit}], My [{self.moment_unit}]', 
                     fontsize=12, fontweight='bold', pad=20)
         
-        figure.tight_layout()
+        nvm = self._nvm_endpoints()
+        v3_i = nvm['V3_i'] if nvm else abs(self.forces[2])
+        v3_j = nvm['V3_j'] if nvm else abs(self.forces[8])
+        m2_i = nvm['M2_i'] if nvm else abs(self.forces[4])
+        m2_j = nvm['M2_j'] if nvm else abs(self.forces[10])
+        self._add_value_table(ax_table, [
+            [f'i  (x = 0.00 {self.length_unit})',  'V2', f'{abs(v3_i):.4f}', self.force_unit],
+            [f'j  (x = {L_display:.2f} {self.length_unit})', 'V2', f'{abs(v3_j):.4f}', self.force_unit],
+            [f'i  (x = 0.00 {self.length_unit})',  'M3', f'{abs(m2_i):.4f}', self.moment_unit],
+            [f'j  (x = {L_display:.2f} {self.length_unit})', 'M3', f'{abs(m2_j):.4f}', self.moment_unit],
+        ])
+        
         canvas.draw()
 
     def add_torsion_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
-        figure = Figure(figsize=(8, 4), dpi=100, facecolor='white')
+        figure = Figure(figsize=(8, 5), dpi=100, facecolor='white', layout='constrained')
         canvas = FigureCanvas(figure)
         layout.addWidget(canvas)
         self.tabs.addTab(tab, "Torsion (T)")
 
         if self.forces is None: return
 
-        ax = figure.add_subplot(111)
+        gs = figure.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.05)
+        ax = figure.add_subplot(gs[0])
+        ax_table = figure.add_subplot(gs[1])
         
         L_display = self.beam_length_display
         L_norm = 10
@@ -322,72 +751,35 @@ class FBDViewerDialog(QDialog):
         ax.set_title(f'Torsional Moment Diagram (Mx) [{self.moment_unit}]', 
                     fontsize=12, fontweight='bold', pad=20)
         
-        figure.tight_layout()
+        self._add_value_table(ax_table, [
+            [f'i  (x = 0.00 {self.length_unit})',  'Mx', f'{abs(mx_i):.4f}', self.moment_unit],
+            [f'j  (x = {L_display:.2f} {self.length_unit})', 'Mx', f'{abs(mx_j):.4f}', self.moment_unit],
+        ])
+        
         canvas.draw()
 
     def _draw_axial_arrow(self, ax, x_pos, force, side, beam_length=10):
-        if abs(force) < 0.001:
-            return
-
+        if abs(force) < 0.001: return
         arrow_len = 1.2
         y_pos = 0.5
-
         s = 1 if force > 0 else -1
-
-        if side == 'left':                 
-            dx = s * arrow_len
-        else:                              
-            dx =  s * arrow_len
+        dx = s * arrow_len if side == 'left' else s * arrow_len
 
         ax.arrow(
-            x_pos, y_pos,
-            dx * 0.85, 0,
-            head_width=0.25,
-            head_length=0.15,
-            fc=self.COLORS['axial'],
-            ec=self.COLORS['axial'],
-            linewidth=2,
-            length_includes_head=True
-        )
-
-        ax.text(
-            x_pos + dx * 0.5, y_pos + 0.6,
-            f'{abs(force):.2f}',
-            ha='center', va='bottom', fontsize=10,
-            bbox=dict(
-                boxstyle='round,pad=0.3',
-                facecolor='white',
-                edgecolor=self.COLORS['axial'],
-                linewidth=1.5
-            )
+            x_pos, y_pos, dx * 0.85, 0, head_width=0.25, head_length=0.15,
+            fc=self.COLORS['axial'], ec=self.COLORS['axial'], linewidth=2, length_includes_head=True
         )
 
     def _draw_shear_arrow(self, ax, x_pos, force, side, beam_length=10):
-        """Draw standard shear force arrow with unit label"""
         if abs(force) < 0.001: return
-        
         arrow_len = 1.0
-        
         dy = arrow_len if force > 0 else -arrow_len
         
-        ax.arrow(x_pos, 0, 0, dy * 0.85,
-                head_width=0.2, head_length=0.15,
-                fc=self.COLORS['shear'], ec=self.COLORS['shear'],
-                linewidth=2, length_includes_head=True)
-        
-        label_y = dy * 1.2
-        label_x = x_pos + (0.7 if side == 'right' else -0.7)
-        
-        ax.text(label_x, label_y, f'{abs(force):.2f}',
-               ha='center', va='center', fontsize=10,
-               bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
-                        edgecolor=self.COLORS['shear'], linewidth=1.5))
+        ax.arrow(x_pos, 0, 0, dy * 0.85, head_width=0.2, head_length=0.15,
+                fc=self.COLORS['shear'], ec=self.COLORS['shear'], linewidth=2, length_includes_head=True)
 
     def _draw_moment(self, ax, x_pos, moment, side, beam_length=10):
-        """Draw standard moment with curved arrow and unit label"""
-        if abs(moment) < 0.001:
-            return
-
+        if abs(moment) < 0.001: return
         radius = 0.5
         theta = np.linspace(0, 1.5 * np.pi, 30)
 
@@ -400,115 +792,19 @@ class FBDViewerDialog(QDialog):
 
         ax.plot(arc_x, arc_y, color=self.COLORS['moment'], linewidth=2)
 
-        ax.annotate(
-            '',
-            xy=(arc_x[-1], arc_y[-1]),
-            xytext=(arc_x[-3], arc_y[-3]),
-            arrowprops=dict(arrowstyle='->', color=self.COLORS['moment'], lw=2)
-        )
-
-        ax.text(
-            x_pos, 2.0, f'{abs(moment):.2f}',
-            ha='center', va='center', fontsize=10,
-            bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
-                    edgecolor=self.COLORS['moment'], linewidth=1.5)
-        )
+        ax.annotate('', xy=(arc_x[-1], arc_y[-1]), xytext=(arc_x[-3], arc_y[-3]),
+            arrowprops=dict(arrowstyle='->', color=self.COLORS['moment'], lw=2))
 
     def _draw_torsion(self, ax, x_pos, torque, side, beam_length=10):
-        """Draw torsion moment with double-headed arrow and unit label"""
         if abs(torque) < 0.001: return
-        
-        ax.plot([x_pos, x_pos], [-0.8, 0.8], 
-               color=self.COLORS['torsion'], linewidth=2, linestyle='--', alpha=0.6)
+        ax.plot([x_pos, x_pos], [-0.8, 0.8], color=self.COLORS['torsion'], linewidth=2, linestyle='--', alpha=0.6)
         
         theta = np.linspace(0, 2 * np.pi, 20)
         radius = 0.4
         circ_x = x_pos + radius * np.cos(theta)
         circ_y = radius * np.sin(theta)
         
-        ax.plot(circ_x, circ_y, color=self.COLORS['torsion'], 
-               linewidth=2, linestyle='-', alpha=0.8)
+        ax.plot(circ_x, circ_y, color=self.COLORS['torsion'], linewidth=2, linestyle='-', alpha=0.8)
         
         direction = '⟲' if torque > 0 else '⟳'
-        ax.text(x_pos, 0, direction, ha='center', va='center',
-               fontsize=18, color=self.COLORS['torsion'], fontweight='bold')
-        
-        label_y = 1.3
-        ax.text(x_pos, label_y, f'{abs(torque):.2f}',
-               ha='center', va='center', fontsize=10,
-               bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
-                        edgecolor=self.COLORS['torsion'], linewidth=1.5))
-
-    def add_3d_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        figure = Figure(figsize=(8, 6), dpi=100, facecolor='white')
-        canvas = FigureCanvas(figure)
-        layout.addWidget(canvas)
-        self.tabs.addTab(tab, "3D Summary")
-
-        if self.forces is None: return
-
-        ax = figure.add_subplot(111, projection='3d')
-        ax.set_proj_type('ortho')
-        
-        L_norm = 10
-        
-        ax.plot([0, L_norm], [0, 0], [0, 0], color=self.COLORS['beam'], linewidth=4)
-        ax.scatter([0, L_norm], [0, 0], [0, 0], color=self.COLORS['node'], s=100, depthshade=False)
-        
-        ax.text(L_norm/2, 0, -1, f'L = {self.beam_length_display:.2f} {self.length_unit}',
-               ha='center', fontsize=9, color='#555')
-        
-        force_config = [
-            (0, [1,0,0], self.COLORS['axial'], 'Fx', self.force_unit),          
-            (1, [0,1,0], self.COLORS['shear'], 'Fy', self.force_unit),            
-            (2, [0,0,1], self.COLORS['shear'], 'Fz', self.force_unit),            
-        ]
-        
-        for i, (idx, vec, color, label, unit) in enumerate(force_config):
-            for node_offset in [0, 6]:
-                force_idx = idx + node_offset
-                val = self.forces[force_idx]
-                if abs(val) < 0.001: continue
-                
-                x_pos = L_norm if node_offset == 6 else 0
-                scale = 1.5 * (1 if val > 0 else -1)
-                
-                if idx == 0:               
-                    y_offset = 0.8
-                                                               
-                    if node_offset == 0:             
-                        x_start = x_pos - 0.5
-                    else:              
-                        x_start = x_pos + 0.5
-                    
-                    ax.quiver(x_start, y_offset, 0, vec[0]*scale, vec[1]*scale, vec[2]*scale,
-                             color=color, arrow_length_ratio=0.2, linewidth=2)
-                    
-                    text_pos = [x_start + vec[0]*scale*1.2, 
-                               y_offset + vec[1]*scale*1.2,
-                               vec[2]*scale*1.2]
-                else:                             
-                    ax.quiver(x_pos, 0, 0, vec[0]*scale, vec[1]*scale, vec[2]*scale,
-                             color=color, arrow_length_ratio=0.2, linewidth=2)
-                    
-                    text_pos = [x_pos + vec[0]*scale*1.2, 
-                               vec[1]*scale*1.2,
-                               vec[2]*scale*1.2]
-                
-                ax.text(text_pos[0], text_pos[1], text_pos[2],
-                       f'{label}\n{abs(val):.1f} {unit}',
-                       color=color, fontsize=9, ha='center', fontweight='bold')
-
-        ax.set_xlim(-3, L_norm + 3)
-        ax.set_ylim(-2.5, 2.5)
-        ax.set_zlim(-2.5, 2.5)
-        ax.set_xlabel('X', fontsize=10, fontweight='bold')
-        ax.set_ylabel('Y', fontsize=10, fontweight='bold')
-        ax.set_zlabel('Z', fontsize=10, fontweight='bold')
-        ax.set_title(f'3D Force Summary [{self.force_unit}]', 
-                    fontsize=12, fontweight='bold', pad=20)
-        
-        figure.tight_layout()
-        canvas.draw()
+        ax.text(x_pos, 0, direction, ha='center', va='center', fontsize=18, color=self.COLORS['torsion'], fontweight='bold')
