@@ -1,5 +1,5 @@
 ; ====================================================================
-; OpenCivil Installer (Force Clean Reinstall if Same Location)
+; OpenCivil Installer (Safe Clean Reinstall - Works Without Admin)
 ; ====================================================================
 
 #define MyAppName "OpenCivil"
@@ -17,7 +17,9 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 
-DefaultDirName={autopf}\{#MyAppName}
+; 👇 Allows install without admin (IMPORTANT for school PCs)
+PrivilegesRequired=lowest
+DefaultDirName={localappdata}\Programs\{#MyAppName}
 
 UsePreviousAppDir=yes
 CloseApplications=yes
@@ -25,7 +27,6 @@ AppMutex=OpenCivilAppMutex
 
 WizardStyle=modern
 SolidCompression=yes
-
 DisableProgramGroupPage=yes
 
 OutputBaseFilename=OpenCivil_Setup_v{#MyAppVersion}
@@ -39,7 +40,7 @@ SetupIconFile=E:\MetuFire\OpenCivil\graphic\logo.ico
 [Files]
 Source: "E:\MetuFire\OpenCivil\app\dist\OpenCivil\*"; \
 DestDir: "{app}"; \
-Flags: ignoreversion recursesubdirs createallsubdirs
+Flags: ignoreversion recursesubdirs createallsubdirs overwritereadonly
 
 ; --------------------------------------------------------------------
 ; SHORTCUTS
@@ -57,7 +58,7 @@ Filename: "{app}\{#MyAppExeName}"; \
 Flags: nowait postinstall skipifsilent
 
 ; --------------------------------------------------------------------
-; CLEAN REINSTALL LOGIC
+; CLEAN REINSTALL LOGIC (SAFE)
 ; --------------------------------------------------------------------
 [Code]
 
@@ -93,7 +94,6 @@ function InitializeSetup(): Boolean;
 begin
   PreviousInstallPath := GetPreviousInstallPath();
   PreviousUninstaller := GetPreviousUninstaller();
-
   Result := True;
 end;
 
@@ -108,12 +108,21 @@ begin
     begin
       if PreviousUninstaller <> '' then
       begin
-        MsgBox('Existing installation detected in same folder. Cleaning previous version...',
-          mbInformation, MB_OK);
+        if IsAdminLoggedOn or IsAdminInstallMode then
+        begin
+          MsgBox('Existing installation detected. Cleaning previous version...',
+            mbInformation, MB_OK);
 
-        Exec(RemoveQuotes(PreviousUninstaller),
-             '/VERYSILENT /NORESTART',
-             '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+          Exec(RemoveQuotes(PreviousUninstaller),
+               '/VERYSILENT /NORESTART',
+               '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+        end
+        else
+        begin
+          MsgBox('Previous version detected, but no admin rights.'#13#10 +
+                 'Continuing without uninstall (files will be overwritten).',
+                 mbInformation, MB_OK);
+        end;
       end;
     end;
   end;

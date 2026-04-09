@@ -125,7 +125,7 @@ class GlobalAssembler:
 
         return k_final
 
-    def _get_exact_fef_via_stiffness(self, L, a, P_vec_local, mat, sec):
+    def _get_exact_fef_via_stiffness(self, L, a, P_vec_local, mat, sec, M_vec_local=None):
         """
         Calculates EXACT FEF by treating the member as two sub-elements 
         connected at the load point. This guarantees consistency with 
@@ -151,6 +151,9 @@ class GlobalAssembler:
         
         F_mid = np.zeros(6)
         F_mid[0:3] = P_vec_local
+
+        if M_vec_local is not None:
+            F_mid[3:6] = M_vec_local
         
         try:
             U_mid = np.linalg.solve(K_mid, F_mid)
@@ -293,11 +296,15 @@ class GlobalAssembler:
                 
                 dist_raw = load['dist']
                 if load['is_rel']: dist_raw *= L_total
-                
+
                 if dist_raw >= ri and dist_raw <= (L_total - rj):
                     a_dist = dist_raw - ri 
                     
-                    fef_local = self._get_exact_fef_via_stiffness(L_clear, a_dist, P_local, mat, sec)
+                    l_type = load.get('l_type', 'Force')
+                    if l_type == 'Moment':
+                        fef_local = self._get_exact_fef_via_stiffness(L_clear, a_dist, np.zeros(3), mat, sec, M_vec_local=P_local)
+                    else:
+                        fef_local = self._get_exact_fef_via_stiffness(L_clear, a_dist, P_local, mat, sec)
                     
             if any(el['releases'][0]) or any(el['releases'][1]):
                 fef_local = self._condense_fef(k_raw, fef_local, el['releases'])
