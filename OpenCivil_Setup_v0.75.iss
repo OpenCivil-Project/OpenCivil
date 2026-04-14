@@ -17,7 +17,6 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 
-; 👇 Allows install without admin (IMPORTANT for school PCs)
 PrivilegesRequired=lowest
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 

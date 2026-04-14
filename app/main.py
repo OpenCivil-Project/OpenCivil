@@ -60,6 +60,7 @@ from app.dialogs.analysis_results_dialog import AnalysisResultsDialog
 from app.auth import GoogleAuthManager, UserProfileWidget
 from app.dialogs.time_history_manager import TimeHistoryManagerDialog
 from app.dialogs.solid_analysis_dialog import SolidAnalysisDialog
+from app.dialogs.update_dialog import UpdateDialog
 from core.terminal_panel import TerminalPanel
 from app.ipc import IPCManager
 
@@ -653,6 +654,12 @@ class MainWindow(QMainWindow):
         gfx_action = QAction(qta.icon('fa5s.desktop', color='#6c757d'), "Graphics Preferences...", self)
         gfx_action.triggered.connect(self.on_graphics_options)
         self.menu_options.addAction(gfx_action)
+
+        self.menu_help = menubar.addMenu("Help")
+        
+        update_action = QAction(qta.icon('fa5s.cloud-download-alt', color='#6c757d'), "Check for Updates...", self)
+        update_action.triggered.connect(self.on_check_updates)
+        self.menu_help.addAction(update_action)
 
         self.canvas.signal_canvas_clicked.connect(self.handle_canvas_click) 
         self.canvas.signal_right_clicked.connect(self.handle_right_click) 
@@ -2394,10 +2401,19 @@ class MainWindow(QMainWindow):
                                                                 
             self._set_active_canvas(self.canvas)
 
+    def on_check_updates(self):
+        """Opens the Check for Updates dialog."""
+        if not hasattr(self, 'update_dlg') or not self.update_dlg.isVisible():
+            self.update_dlg = UpdateDialog(self)
+            self.update_dlg.show()
+        else:
+            self.update_dlg.raise_()
 def main():
     if sys.platform == 'win32':
         myappid = 'metu.civil.OPENCIVIL.v03'
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
     app = QApplication(sys.argv)
 
@@ -2559,6 +2575,8 @@ def main():
             window.user_widget.raise_()
 
             def on_logout():
+                nonlocal window                                                                                   
+
                 if window.model and not window.undo_stack.isClean():
                     reply = QMessageBox.question(
                         window,
@@ -2573,42 +2591,26 @@ def main():
                     elif reply == QMessageBox.StandardButton.Cancel:
                         return  
 
-                if hasattr(window, 'canvas'):
-
-                    if hasattr(window.canvas, 'animation_manager'):
-                        window.canvas.animation_manager.stop_animation()
-                    for item in window.canvas.items[:]:
-                        try:
-                            window.canvas.removeItem(item)
-                        except Exception:
-                            pass
-                    window.canvas.node_items.clear()
-                    window.canvas.element_items.clear()
-                    window.canvas.static_items.clear()
-                    window.canvas.current_model = None
-                    window.canvas.selected_element_ids = []
-                    window.canvas.selected_node_ids = []
-                    window.canvas.view_deflected = False
-                    window.canvas.invalidate_deflection_cache()
-                window.model = None
-                window.undo_stack.clear()
-                window.selected_ids = []
-                window.selected_node_ids = []
-                window.set_interface_state(False)
-                window.setWindowTitle("OPENCIVIL Analysis Engine")
-                window.status.showMessage("Welcome. Please create or open a model.")
-
+                ipc.broadcast_logout()                                 
+                
+                window.hide()
                 if hasattr(window, 'user_widget'):
                     window.user_widget.deleteLater()
-
-                ipc.broadcast_logout()                                 
-                window.hide()
+                window.deleteLater()                                                                  
 
                 if auth_manager.login(parent=None):
+                    
+                    window = MainWindow()
+                    window.auth_manager = auth_manager
+                    
+                    ipc.raise_requested.connect(lambda: (window.showNormal(), window.raise_(), window.activateWindow()))
+                    
                     window.showMaximized()
                     window.activateWindow()
+                    
                     QTimer.singleShot(100, attach_user_widget)
                 else:
+                                                                   
                     app.quit()
 
             window.user_widget.logout_requested.connect(on_logout)
