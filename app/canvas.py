@@ -107,8 +107,8 @@ class MCanvas3D(gl.GLViewWidget):
 
         self.blink_state = True
                                     
-        self.pivot_dot = gl.GLScatterPlotItem(pos=np.array([[0,0,0]]), size=12, 
-                                              color=(1, 1, 0, 0.8), pxMode=True)
+        self.pivot_dot = gl.GLScatterPlotItem(pos=np.array([[0,0,0]]), size=6, 
+                                              color=(1, 1, 0, 0.3), pxMode=True)
         self.pivot_dot.setGLOptions('translucent')
         self.pivot_dot.setVisible(False)
         self.addItem(self.pivot_dot)
@@ -124,14 +124,17 @@ class MCanvas3D(gl.GLViewWidget):
         self._hover_timer.timeout.connect(lambda: self._handle_hover_tooltip(*self._pending_hover_pos))
 
         self.snap_ring = gl.GLLinePlotItem(pos=np.array([[0,0,0]]), mode='line_strip', 
-                                           color=(1, 0, 0, 1), width=3, antialias=True)
+                                           color=(1, 0, 0, 0.4), width=1.5, antialias=True)
         self.snap_ring.setGLOptions('translucent')
         self.addItem(self.snap_ring)
         
-        self.snap_dot = gl.GLScatterPlotItem(pos=np.array([[0,0,0]]), size=10, 
-                                             color=(1, 0, 0, 1), pxMode=True)
+        self.snap_dot = gl.GLScatterPlotItem(pos=np.array([[0,0,0]]), size=5, 
+                                             color=(1, 0, 0, 0.5), pxMode=True)
         self.snap_dot.setGLOptions('translucent')
         self.addItem(self.snap_dot)
+
+        self.snap_text = gl.GLTextItem(pos=np.array([0,0,0]), text="", color=(0.2, 0.6, 1.0, 0.8))
+        self.addItem(self.snap_text)
         
         self.snap_ring.setVisible(False)
         self.snap_dot.setVisible(False)
@@ -561,12 +564,18 @@ class MCanvas3D(gl.GLViewWidget):
                     ny += disp[1] * self.deflection_scale * self.anim_factor
                     nz += disp[2] * self.deflection_scale * self.anim_factor
             sel_pos.append([nx, ny, nz])
+
         if sel_pos:
             sp = gl.GLScatterPlotItem(
                 pos=np.array(sel_pos), size=size + 2,
                 color=(1, 0, 0, 1), pxMode=True
             )
-            sp.setGLOptions('opaque')
+                                                                                       
+            sp.setGLOptions({
+                'glEnable': (GL_BLEND,),
+                'glBlendFunc': (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA),
+                'glDisable': (GL_DEPTH_TEST,)
+            })
             self.addItem(sp)
             self._sel_overlay_items.append(sp)
 
@@ -1504,19 +1513,48 @@ class MCanvas3D(gl.GLViewWidget):
             self.addItem(gl.GLLinePlotItem(pos=np.array(dim_pos), mode='lines', 
                                            color=c, width=2, antialias=True))
         
-        self.addItem(gl.GLLinePlotItem(pos=np.array([[0,0,0], [5,0,0]]), color=(1,0,0,1), width=3, glOptions='opaque', antialias=True))
-        self.addItem(gl.GLTextItem(pos=np.array([5.5,0,0]), text="X", color=(1,0,0,1)))
+        from PyQt6.QtGui import QFont, QColor
         
-        self.addItem(gl.GLLinePlotItem(pos=np.array([[0,0,0], [0,5,0]]), color=(0,1,0,1), width=3, glOptions='opaque', antialias=True))
-        self.addItem(gl.GLTextItem(pos=np.array([0,5.5,0]), text="Y", color=(0,1,0,1)))
+        axis_len = 1.5
+        text_offset = axis_len + 0.15
         
-        self.addItem(gl.GLLinePlotItem(pos=np.array([[0,0,0], [0,0,5]]), color=(0,0,1,1), width=3, glOptions='opaque', antialias=True))
-        self.addItem(gl.GLTextItem(pos=np.array([0,0,5.5]), text="Z", color=(0,0,1,1)))
+        ax_font = QFont("Consolas", 14, QFont.Weight.Bold)
+        
+        on_top_opts = {
+            'glEnable': (GL_BLEND,),
+            'glBlendFunc': (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA),
+            'glDisable': (GL_DEPTH_TEST,)
+        }
+
+        line_x = gl.GLLinePlotItem(pos=np.array([[0,0,0], [axis_len,0,0]]), color=(1,0,0,1), width=2, antialias=True)
+        line_x.setGLOptions(on_top_opts)
+        self.addItem(line_x)
+        
+        text_x = gl.GLTextItem(pos=np.array([text_offset, 0, 0]), text="X", color=QColor(255, 50, 50), font=ax_font)
+        text_x.setGLOptions(on_top_opts)
+        self.addItem(text_x)
+        
+        line_y = gl.GLLinePlotItem(pos=np.array([[0,0,0], [0,axis_len,0]]), color=(0,1,0,1), width=2, antialias=True)
+        line_y.setGLOptions(on_top_opts)
+        self.addItem(line_y)
+        
+        text_y = gl.GLTextItem(pos=np.array([0, text_offset, 0]), text="Y", color=QColor(50, 200, 50), font=ax_font)
+        text_y.setGLOptions(on_top_opts)
+        self.addItem(text_y)
+        
+        line_z = gl.GLLinePlotItem(pos=np.array([[0,0,0], [0,0,axis_len]]), color=(0,0,1,1), width=1.5, antialias=True)
+        line_z.setGLOptions(on_top_opts)
+        self.addItem(line_z)
+        
+        text_z = gl.GLTextItem(pos=np.array([0, 0, text_offset]), text="Z", color=QColor(50, 50, 255), font=ax_font)
+        text_z.setGLOptions(on_top_opts)
+        self.addItem(text_z)
 
     def get_snap_point(self, mouse_x, mouse_y):
         if not self.snapping_enabled:
             self.snap_ring.setVisible(False)
             self.snap_dot.setVisible(False)
+            self.snap_text.setVisible(False)
             return None
         if not self.current_model: return None
 
@@ -1607,15 +1645,20 @@ class MCanvas3D(gl.GLViewWidget):
                 pt = center + radius * (np.cos(ang) * right + np.sin(ang) * up)
                 ring_pts.append(pt)
 
-            self.snap_ring.setData(pos=np.array(ring_pts), color=(1, 0, 0, 1), width=3)
+            self.snap_ring.setData(pos=np.array(ring_pts), color=(1, 0, 0, 0.4), width=1.5)
             self.snap_ring.setVisible(True)
 
-            self.snap_dot.setData(pos=np.array([[nx, ny, nz]]), color=(1, 1, 0, 1), size=8)                
+            self.snap_dot.setData(pos=np.array([[nx, ny, nz]]), color=(1, 1, 0, 0.5), size=5)                
             self.snap_dot.setVisible(True)
+            
+            coord_str = f"X: {bx:.2f}  Y: {by:.2f}  Z: {bz:.2f}"
+            self.snap_text.setData(pos=np.array([nx + 0.3, ny + 0.3, nz + 0.3]), text=coord_str)
+            self.snap_text.setVisible(True)
             
         else:
             self.snap_ring.setVisible(False)
             self.snap_dot.setVisible(False)
+            self.snap_text.setVisible(False)                              
         
         return best_point
     

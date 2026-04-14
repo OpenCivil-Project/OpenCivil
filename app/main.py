@@ -876,7 +876,13 @@ class MainWindow(QMainWindow):
                 self.model.file_path = filename
 
                 if self.model.graphics_settings:
+                                                                                  
+                    current_msaa = self.graphics_settings.get("msaa_level", 2)
+                    
                     self.graphics_settings.update(self.model.graphics_settings)
+                    
+                    self.graphics_settings["msaa_level"] = current_msaa
+                    
                     self._apply_canvas_view_settings(self.graphics_settings)
                     self.update_graphics_settings(self.graphics_settings)
 
@@ -909,8 +915,7 @@ class MainWindow(QMainWindow):
         if filename:
             if not filename.endswith(".mf"): filename += ".mf"
             try:
-                self.model.graphics_settings = self.graphics_settings
-
+                                                                             
                 self.graphics_settings['view_extruded'] = self.canvas.view_extruded
                 self.graphics_settings['show_slabs'] = self.canvas.show_slabs
                 self.graphics_settings['show_joints'] = self.canvas.show_joints
@@ -921,7 +926,13 @@ class MainWindow(QMainWindow):
                 self.graphics_settings['show_releases'] = self.canvas.show_releases
                 self.graphics_settings['load_type_filter'] = self.canvas.load_type_filter
                 self.graphics_settings['visible_load_patterns'] = self.canvas.visible_load_patterns
-                self.model.graphics_settings = self.graphics_settings
+
+                model_graphics = self.graphics_settings.copy()
+                if "msaa_level" in model_graphics:
+                    del model_graphics["msaa_level"]
+                
+                self.model.graphics_settings = model_graphics
+                self.model.save_to_file(filename)
 
                 self.model.save_to_file(filename)
                 self.model.file_path = filename
@@ -2509,7 +2520,13 @@ def main():
                         window.model.file_path = file_path
                         window.terminal_panel.set_model(window.model)
                         if window.model.graphics_settings:
+                                                                                          
+                            current_msaa = window.graphics_settings.get("msaa_level", 2)
+                            
                             window.graphics_settings.update(window.model.graphics_settings)
+                            
+                            window.graphics_settings["msaa_level"] = current_msaa
+                            
                             window._apply_canvas_view_settings(window.graphics_settings)
                             window.update_graphics_settings(window.graphics_settings)
                         if hasattr(window.model, 'saved_unit_system'):
@@ -2630,7 +2647,13 @@ def main():
                     window.terminal_panel.set_model(window.model)
                     
                     if window.model.graphics_settings:
+                                                                                      
+                        current_msaa = window.graphics_settings.get("msaa_level", 2)
+                        
                         window.graphics_settings.update(window.model.graphics_settings)
+                        
+                        window.graphics_settings["msaa_level"] = current_msaa
+                        
                         window._apply_canvas_view_settings(window.graphics_settings)
                         window.update_graphics_settings(window.graphics_settings)
                     
