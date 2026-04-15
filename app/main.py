@@ -1029,12 +1029,14 @@ class MainWindow(QMainWindow):
                 return
             
             section = self.draw_dialog.get_selected_section()
+            
+            rel_i, rel_j = self.draw_dialog.get_release_arrays()
+            
             if section:
-                                          
                 p1 = (self.draw_start_node.x, self.draw_start_node.y, self.draw_start_node.z)
                 p2 = (end_node.x, end_node.y, end_node.z)
                 
-                cmd = CmdDrawFrame(self.model, self, p1, p2, section)
+                cmd = CmdDrawFrame(self.model, self, p1, p2, section, rel_i, rel_j)
                 self.add_command(cmd)
                 
                 self.draw_start_node = self.model.get_or_create_node(*p2)

@@ -9,23 +9,30 @@ class CmdDrawFrame(QUndoCommand):
     Undo: Deletes the frame (and nodes if they were created new).
     Redo: Creates the frame.
     """
-    def __init__(self, model, main_window, n1_coords, n2_coords, section, description="Draw Frame"):
+    def __init__(self, model, main_window, n1_coords, n2_coords, section, rel_i=None, rel_j=None, description="Draw Frame"):
         super().__init__(description)
         self.model = model
         self.main_window = main_window
         self.n1_coords = n1_coords
         self.n2_coords = n2_coords
         self.section = section
+        
+        self.rel_i = rel_i or [False, False, False, False, False, False]
+        self.rel_j = rel_j or [False, False, False, False, False, False]
+        
         self.created_elem_id = None
         self.created_n1_id = None
         self.created_n2_id = None
 
     def redo(self):
-                                
         n1 = self.model.get_or_create_node(*self.n1_coords)
         n2 = self.model.get_or_create_node(*self.n2_coords)
         
         el = self.model.add_element(n1, n2, self.section)
+        
+        el.releases_i = self.rel_i[:]
+        el.releases_j = self.rel_j[:]
+        
         self.created_elem_id = el.id
         self.created_n1_id = n1.id
         self.created_n2_id = n2.id
@@ -34,13 +41,12 @@ class CmdDrawFrame(QUndoCommand):
 
     def undo(self):
         if self.created_elem_id:
-                                                                                      
             self.model.remove_element(self.created_elem_id)
         self._refresh_view()
 
     def _refresh_view(self):
         self.main_window.canvas.draw_model(self.model)
-
+        
 class CmdDeleteSelection(QUndoCommand):
     """
     Command to Delete Frames and/or Joints.
