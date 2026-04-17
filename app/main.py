@@ -17,6 +17,7 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtCore import QUrl, pyqtSignal
 import qtawesome as qta
 from PyQt6.QtGui import QAction, QPixmap, QCursor, QVector3D, QColor, QIcon, QPainter, QFont
+from PyQt6.QtGui import QActionGroup
 
 if getattr(sys, 'frozen', False):
 
@@ -32,7 +33,7 @@ else:
 
 sys.path.append(root_dir)
 
-from app.commands import CmdDrawFrame, CmdDeleteSelection, CmdReplicate
+from app.commands import CmdDrawFrame, CmdDeleteSelection, CmdReplicate, CmdAssignInsertion
 from core.model import StructuralModel, LoadCase
 from app.canvas import MCanvas3D
 from app.dialogs.new_model_dialog import NewModelDialog
@@ -44,6 +45,8 @@ from app.dialogs.load_pattern_dialog import LoadPatternDialog
 from app.dialogs.assign_load_dialog import AssignJointLoadDialog
 from app.dialogs.assign_member_load_dialog import AssignFrameLoadDialog
 from app.dialogs.release_dialog import FrameReleaseDialog
+from app.dialogs.draw_cross_brace_dialog import DrawCrossBraceDialog
+from app.dialogs.draw_beam_column_dialog import DrawBeamColumnDialog
 from app.dialogs.view_options_dialog import ViewOptionsDialog
 from app.dialogs.assign_local_axis_dialog import AssignFrameAxisDialog
 from app.dialogs.graphics_dialog import GraphicsOptionsDialog
@@ -190,7 +193,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         
-        self.setWindowTitle("OPENCIVIL Analysis Engine")
+        self.setWindowTitle("OpenCivil v0.7.52")
         self.resize(1200, 800)
 
         icon_path = os.path.join(root_dir, "graphic", "logo.png") 
@@ -203,7 +206,11 @@ class MainWindow(QMainWindow):
 
         self.draw_mode_active = False
         self.draw_start_node = None 
-        self.draw_dialog = None 
+        self.draw_dialog = None
+        self.cross_brace_mode_active = False
+        self.cross_brace_dialog = None
+        self.beam_col_mode_active = False
+        self.beam_col_dialog = None
         self.selected_ids = []
         self.selected_node_ids = []
         
@@ -331,13 +338,21 @@ class MainWindow(QMainWindow):
         
         self.menu_draw = menubar.addMenu("Draw")
         
-        draw_action = QAction(qta.icon('fa5s.pencil-ruler', color='#6c757d'), "Draw Frame/Cable...", self)
+        draw_action = QAction(qta.icon('fa5s.pencil-alt', color='#6c757d'), "Draw Frame/Cable...", self)
         draw_action.triggered.connect(self.on_draw_frame)
         self.menu_draw.addAction(draw_action)
         
         draw_slab_action = QAction(qta.icon('fa5s.draw-polygon', color='#6c757d'), "Create Slab from Selection", self)
         draw_slab_action.triggered.connect(self.on_create_slab_from_selection)
         self.menu_draw.addAction(draw_slab_action)
+
+        cross_brace_action = QAction(qta.icon('fa5s.times', color='#6c757d'), "Quick Cross Brace...", self)
+        cross_brace_action.triggered.connect(self.on_draw_cross_brace)
+        self.menu_draw.addAction(cross_brace_action)
+
+        beam_col_action = QAction(qta.icon('fa5s.i-cursor', color='#6c757d'), "Quick Beam / Column...", self)
+        beam_col_action.triggered.connect(self.on_draw_beam_column)
+        self.menu_draw.addAction(beam_col_action)
 
         self.toolbar = self.addToolBar("Views")
         self.toolbar.setMovable(False)
@@ -433,7 +448,7 @@ class MainWindow(QMainWindow):
         self.toolbar.addSeparator()
         self.toolbar.addSeparator()
 
-        btn_3d = QAction(qta.icon('fa5s.dice-d20', color='#6c757d'), "3D", self)
+        btn_3d = QAction(create_plane_icon("3D"), "3D View", self)
         btn_3d.triggered.connect(self.set_view_3d)
         self.toolbar.addAction(btn_3d)
         
@@ -532,6 +547,55 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.toolbar.addWidget(spacer)
+
+        from PyQt6.QtGui import QActionGroup                                                 
+        
+        self.sidebar = self.addToolBar("Draw Tools")
+        self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, self.sidebar)
+        self.sidebar.setMovable(False)
+        self.sidebar.setIconSize(QSize(20, 20))
+        
+        self.sidebar.setStyleSheet(self.toolbar.styleSheet())
+
+        self.draw_action_group = QActionGroup(self)
+        self.draw_action_group.setExclusive(True)
+
+        self.act_select = QAction(qta.icon('fa5s.mouse-pointer', color='#6c757d'), "Select Mode", self)
+        self.act_select.setToolTip("Select Objects (Esc)")
+        self.act_select.setCheckable(True)
+        self.act_select.setChecked(True)                
+        self.act_select.triggered.connect(self._on_sidebar_select_mode)
+        self.draw_action_group.addAction(self.act_select)
+        self.sidebar.addAction(self.act_select)
+
+        self.sidebar.addSeparator()
+
+        self.act_draw_frame = QAction(qta.icon('fa5s.pencil-alt', color='#6c757d'), "Draw Frame", self)
+        self.act_draw_frame.setToolTip("Draw Frame/Cable")
+        self.act_draw_frame.setCheckable(True)
+        self.act_draw_frame.triggered.connect(self.on_draw_frame)
+        self.draw_action_group.addAction(self.act_draw_frame)
+        self.sidebar.addAction(self.act_draw_frame)
+
+        self.act_quick_beam = QAction(qta.icon('fa5s.i-cursor', color='#6c757d'), "Quick Beam/Column", self)
+        self.act_quick_beam.setToolTip("Quick Draw Beam/Column")
+        self.act_quick_beam.setCheckable(True)
+        self.act_quick_beam.triggered.connect(self.on_draw_beam_column)
+        self.draw_action_group.addAction(self.act_quick_beam)
+        self.sidebar.addAction(self.act_quick_beam)
+
+        self.act_quick_brace = QAction(qta.icon('fa5s.times', color='#6c757d'), "Quick Cross Brace", self)
+        self.act_quick_brace.setToolTip("Quick Draw Cross Brace")
+        self.act_quick_brace.setCheckable(True)
+        self.act_quick_brace.triggered.connect(self.on_draw_cross_brace)
+        self.draw_action_group.addAction(self.act_quick_brace)
+        self.sidebar.addAction(self.act_quick_brace)
+
+        self.act_draw_slab = QAction(qta.icon('fa5s.draw-polygon', color='#6c757d'), "Create Slab", self)
+        self.act_draw_slab.setToolTip("Create Slab from Selected Joints")
+                                                                                      
+        self.act_draw_slab.triggered.connect(self.on_create_slab_from_selection)
+        self.sidebar.addAction(self.act_draw_slab)
 
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
@@ -784,6 +848,8 @@ class MainWindow(QMainWindow):
         self.canvas.set_standard_view("3D")  
         if self.model: self.draw_both_canvases()
         self.status.showMessage("View: Full 3D")
+        if self.cross_brace_dialog:
+            self.cross_brace_dialog.update_plane_status(None)
 
     def set_view_2d(self, axis):
         self.current_view_mode = axis
@@ -812,13 +878,17 @@ class MainWindow(QMainWindow):
         self.canvas.active_view_plane = {'axis': axis, 'value': val}
         if self.model: self.draw_both_canvases()
         self.status.showMessage(f"Filtered View: {self.current_view_mode} @ {axis.upper()}={val:.2f}m")
+        if self.cross_brace_dialog:
+            self.cross_brace_dialog.update_plane_status(self.canvas.active_view_plane)
 
     def set_view_iso(self):
         self.current_view_mode = "3D"
         self.canvas.active_view_plane = None
         self.canvas.set_standard_view("ISO") 
         if self.model: self.draw_both_canvases()
-        self.status.showMessage("View: Orthogonal Isometric")  
+        self.status.showMessage("View: Orthogonal Isometric")
+        if self.cross_brace_dialog:
+            self.cross_brace_dialog.update_plane_status(None)
 
     def on_new_model(self):
         dialog = NewModelDialog(self)
@@ -829,9 +899,31 @@ class MainWindow(QMainWindow):
                 self.terminal_panel.set_model(self.model)
                 self.undo_stack.clear()
 
+                try:
+                    from core.properties import Material, RectangularSection, ISection
+                    
+                    mat_conc = Material("C30", 3.2e7, 0.2, 24.0, "Concrete", 0.0, 0.0)
+                    self.model.add_material(mat_conc)
+
+                    mat_steel = Material("S275", 2.0e8, 0.3, 78.5, "Steel", 275000.0, 430000.0)
+                    self.model.add_material(mat_steel)
+
+                    default_color = (0.259, 0.110, 0.749, 1.0)
+
+                    sec_beam = RectangularSection("B30x50", mat_conc, 0.3, 0.5)
+                    sec_beam.color = default_color                       
+                    self.model.add_section(sec_beam)
+                    
+                    sec_col = ISection("IPE300", mat_steel, 0.300, 0.150, 0.0107, 0.150, 0.0107, 0.0071)
+                    sec_col.color = default_color                       
+                    self.model.add_section(sec_col)
+                    
+                    print("> GUI: Default materials and sections loaded successfully.")
+                except Exception as e:
+                    print(f"> GUI Error: {e}")
+
                 if not hasattr(self.model, 'mass_sources'):
                     self.model.mass_sources = {}
-                                              
                     from core.model import MassSource
                     def_ms = MassSource("MSSSRC1")
                     self.model.mass_sources["MSSSRC1"] = def_ms
@@ -861,7 +953,9 @@ class MainWindow(QMainWindow):
                 self.model.load_cases["RSA_X"] = rsa_case
 
                 self.set_interface_state(True)
-                self.draw_both_canvases()
+                
+                self.set_view_3d() 
+                
                 self.status.showMessage(f"New Model Created. Units: {dialog.selected_units}")
                 self.update_window_title()
 
@@ -992,7 +1086,273 @@ class MainWindow(QMainWindow):
         
         self.status.showMessage("Ready")
 
+        if hasattr(self, 'act_select'):
+            self.act_select.setChecked(True)
+
+    def _on_sidebar_select_mode(self):
+        """Kills any active drawing modes and returns to pure selection state."""
+                                                    
+        if getattr(self, 'draw_mode_active', False):
+            if getattr(self, 'draw_dialog', None): self.draw_dialog.hide()
+            self.on_draw_finished()
+            
+        if getattr(self, 'cross_brace_mode_active', False):
+            if getattr(self, 'cross_brace_dialog', None): self.cross_brace_dialog.hide()
+            self.on_cross_brace_finished()
+            
+        if getattr(self, 'beam_col_mode_active', False):
+            if getattr(self, 'beam_col_dialog', None): self.beam_col_dialog.hide()
+            self.on_beam_col_finished()
+            
+        self.canvas.setCursor(Qt.CursorShape.ArrowCursor)
+        if getattr(self, 'canvas2_visible', False):
+            self.canvas2.setCursor(Qt.CursorShape.ArrowCursor)
+            
+        self.status.showMessage("Ready (Selection Mode)")
+
+    def _frame_exists_between(self, p1, p2):
+        """Return True if an element already connects the same two points (either direction)."""
+        tol = 1e-6
+        for elem in self.model.elements.values():
+            ni, nj = elem.node_i, elem.node_j
+            fwd = (abs(ni.x-p1[0])<tol and abs(ni.y-p1[1])<tol and abs(ni.z-p1[2])<tol and
+                   abs(nj.x-p2[0])<tol and abs(nj.y-p2[1])<tol and abs(nj.z-p2[2])<tol)
+            rev = (abs(ni.x-p2[0])<tol and abs(ni.y-p2[1])<tol and abs(ni.z-p2[2])<tol and
+                   abs(nj.x-p1[0])<tol and abs(nj.y-p1[1])<tol and abs(nj.z-p1[2])<tol)
+            if fwd or rev:
+                return True
+        return False
+
+    def on_draw_cross_brace(self):
+        if not self.model.sections:
+            QMessageBox.warning(self, "Error", "Define a Section Property first!")
+            return
+        self.cross_brace_mode_active = True
+        self.canvas.cross_brace_mode = True
+        self.canvas.snapping_enabled = False
+        self.status.showMessage("Cross Brace Mode: Hover over a grid cell and click to place brace...")
+
+        if self.cross_brace_dialog is None:
+            self.cross_brace_dialog = DrawCrossBraceDialog(self.model, self)
+            self.cross_brace_dialog.signal_dialog_closed.connect(self.on_cross_brace_finished)
+
+        self.cross_brace_dialog.refresh_sections()
+        self.cross_brace_dialog.update_plane_status(self.canvas.active_view_plane)
+        self.cross_brace_dialog.show()
+
+    def on_cross_brace_finished(self):
+        self.cross_brace_mode_active = False
+        self.canvas.cross_brace_mode = False
+        self.canvas.snapping_enabled = False
+        self.canvas._brace_hover_cell = None
+        self.canvas._brace_prev_x1.setVisible(False)
+        self.canvas._brace_prev_x2.setVisible(False)
+        self.canvas._brace_prev_border.setVisible(False)
+        self.status.showMessage("Ready")
+        
+        if hasattr(self, 'act_select'):
+            self.act_select.setChecked(True)
+                                                                        
+    def on_draw_beam_column(self):
+        if not self.model.sections:
+            QMessageBox.warning(self, "Error", "Define a Section Property first!")
+            return
+
+        self.beam_col_mode_active = True
+        self.canvas.beam_col_mode  = True
+        self.canvas.snapping_enabled = False
+
+        if self.beam_col_dialog is None:
+            self.beam_col_dialog = DrawBeamColumnDialog(self.model, self)
+            self.beam_col_dialog.signal_dialog_closed.connect(self.on_beam_col_finished)
+            self.beam_col_dialog.signal_type_changed.connect(self._on_beam_col_type_changed)
+
+        self.beam_col_dialog.refresh_sections()
+        self._on_beam_col_type_changed(self.beam_col_dialog.get_member_type())
+        self.beam_col_dialog.show()
+
+    def _on_beam_col_type_changed(self, member_type):
+        self.canvas._beam_col_type = member_type
+        self.canvas._beam_col_hover_seg = None
+        self.canvas._beam_col_prev_line.setVisible(False)
+        if member_type == 'beam':
+            self.status.showMessage("Beam Mode: Hover over a horizontal grid line and click to place...")
+        else:
+            self.status.showMessage("Column Mode: Hover over a vertical grid line and click to place...")
+
+    def on_beam_col_finished(self):
+        self.beam_col_mode_active = False
+        self.canvas.beam_col_mode  = False
+        self.canvas.snapping_enabled = False
+        self.canvas._beam_col_hover_seg = None
+        self.canvas._beam_col_prev_line.setVisible(False)
+        self.status.showMessage("Ready")
+        
+        if hasattr(self, 'act_select'):
+            self.act_select.setChecked(True)
+
+    def _place_beam_column_at(self):
+        import numpy as np
+        seg = self.canvas._beam_col_hover_seg
+        if seg is None:
+            self.status.showMessage("No grid segment detected — hover over a grid line.")
+            return
+
+        section = self.beam_col_dialog.get_selected_section()
+        if not section:
+            self.status.showMessage("Error: No section selected.")
+            return
+
+        p1, p2 = seg
+        rel_i, rel_j  = self.beam_col_dialog.get_release_arrays()
+        member_type   = self.beam_col_dialog.get_member_type()
+        rotation      = self.beam_col_dialog.get_rotation_angle()
+        
+        label = "Draw Quick Beam" if member_type == 'beam' else "Draw Quick Column"
+
+        if self._frame_exists_between(tuple(p1), tuple(p2)):
+            kind = "Beam" if member_type == 'beam' else "Column"
+            self.status.showMessage(f"⚠️ Cannot place {kind}: an element already exists on this segment.")
+            return
+
+        self.undo_stack.beginMacro(label)
+
+        cmd = CmdDrawFrame(self.model, self, tuple(p1), tuple(p2), section, rel_i, rel_j)
+        self.undo_stack.push(cmd)
+        
+        new_elem_id = max(self.model.elements.keys())
+
+        if rotation != 0.0:
+            from app.commands import CmdAssignLocalAxes                       
+            cmd_rot = CmdAssignLocalAxes(self.model, self, [new_elem_id], rotation)
+            self.undo_stack.push(cmd_rot)
+
+        if member_type == 'beam' and self.beam_col_dialog.get_apply_offset():
+            no_transform = self.beam_col_dialog.get_no_transform()
+            cmd_ins = CmdAssignInsertion(
+                self.model, self,
+                [new_elem_id],
+                8,                                                     
+                np.zeros(3),                              
+                np.zeros(3),                              
+                "Local",
+                no_transform
+            )
+            self.undo_stack.push(cmd_ins)
+
+        self.undo_stack.endMacro()
+        
+        kind = "Beam" if member_type == 'beam' else "Column"
+        self.status.showMessage(f"{kind} placed. Click another segment or Esc to exit.")
+        
+    def _get_brace_cell_corners(self, x, y, z):
+        """
+        Given a snapped grid corner and the active view plane, returns the
+        4 corners of the grid cell extending in the +axis direction.
+        corners[0]→corners[2] = diagonal A (↗), corners[1]→corners[3] = diagonal B (↖)
+        Returns None if no valid adjacent cell exists.
+        """
+        if not self.canvas.active_view_plane:
+            return None
+        grids = self.model.grid
+        axis = self.canvas.active_view_plane['axis']
+        val  = self.canvas.active_view_plane['value']
+
+        def next_val(v, sorted_list):
+            for gv in sorted_list:
+                if gv > v + 0.001:
+                    return gv
+            return None
+
+        xs = sorted(grids.x_grids)
+        ys = sorted(grids.y_grids)
+        zs = sorted(grids.z_grids)
+
+        if axis == 'z':                                   
+            x_hi = next_val(x, xs)
+            y_hi = next_val(y, ys)
+            if x_hi is None or y_hi is None:
+                return None
+            return [
+                (x,    y,    val),                  
+                (x_hi, y,    val),                  
+                (x_hi, y_hi, val),                  
+                (x,    y_hi, val),                  
+            ]
+        elif axis == 'x':                                 
+            y_hi = next_val(y, ys)
+            z_hi = next_val(z, zs)
+            if y_hi is None or z_hi is None:
+                return None
+            return [
+                (val, y,    z),                     
+                (val, y_hi, z),                     
+                (val, y_hi, z_hi),                  
+                (val, y,    z_hi),                  
+            ]
+        elif axis == 'y':                                 
+            x_hi = next_val(x, xs)
+            z_hi = next_val(z, zs)
+            if x_hi is None or z_hi is None:
+                return None
+            return [
+                (x,    val, z),                     
+                (x_hi, val, z),                     
+                (x_hi, val, z_hi),                  
+                (x,    val, z_hi),                  
+            ]
+        return None
+
+    def _draw_cross_brace_at(self, x, y, z):
+        section = self.cross_brace_dialog.get_selected_section()
+        if not section:
+            self.status.showMessage("Error: No Section selected.")
+            return
+
+        corners = self.canvas._brace_hover_cell
+        if corners is None:
+            self.status.showMessage("No grid cell detected — move mouse over a valid cell.")
+            return
+
+        rel_i, rel_j  = self.cross_brace_dialog.get_release_arrays()
+        brace_type     = self.cross_brace_dialog.get_brace_type()
+
+        placed = 0
+        skipped = 0
+        self.undo_stack.beginMacro("Draw Cross Brace")
+
+        if brace_type in ("x", "diag_a"):
+            if self._frame_exists_between(corners[0], corners[2]):
+                skipped += 1
+            else:
+                cmd = CmdDrawFrame(self.model, self, corners[0], corners[2], section, rel_i, rel_j)
+                self.undo_stack.push(cmd)
+                placed += 1
+
+        if brace_type in ("x", "diag_b"):
+            if self._frame_exists_between(corners[1], corners[3]):
+                skipped += 1
+            else:
+                cmd = CmdDrawFrame(self.model, self, corners[1], corners[3], section, rel_i, rel_j)
+                self.undo_stack.push(cmd)
+                placed += 1
+
+        self.undo_stack.endMacro()
+
+        if skipped > 0 and placed == 0:
+            self.status.showMessage("⚠️ Cannot place brace: element(s) already exist on this cell.")
+        elif skipped > 0:
+            self.status.showMessage(f"Cross Brace placed ({skipped} diagonal(s) skipped — already exist). Click another cell or Esc to exit.")
+        else:
+            self.status.showMessage("Cross Brace placed. Click another cell or Esc to exit.")
+
     def handle_canvas_click(self, x, y, z):
+        if self.cross_brace_mode_active:
+            self._draw_cross_brace_at(x, y, z)
+            return
+        if self.beam_col_mode_active:
+            self._place_beam_column_at()
+            return
         if self.picking_replicate:
             if self.replicate_p1 is None:
                 self.replicate_p1 = (x, y, z)
@@ -1035,6 +1395,10 @@ class MainWindow(QMainWindow):
             if section:
                 p1 = (self.draw_start_node.x, self.draw_start_node.y, self.draw_start_node.z)
                 p2 = (end_node.x, end_node.y, end_node.z)
+
+                if self._frame_exists_between(p1, p2):
+                    self.status.showMessage("⚠️ Cannot draw: an element already exists between these two nodes.")
+                    return
                 
                 cmd = CmdDrawFrame(self.model, self, p1, p2, section, rel_i, rel_j)
                 self.add_command(cmd)
@@ -1053,7 +1417,15 @@ class MainWindow(QMainWindow):
                 if self.draw_dialog:
                     self.draw_dialog.hide()
                 self.on_draw_finished()
-        
+            if self.cross_brace_mode_active:
+                if self.cross_brace_dialog:
+                    self.cross_brace_dialog.hide()
+                self.on_cross_brace_finished()
+            if self.beam_col_mode_active:
+                if self.beam_col_dialog:
+                    self.beam_col_dialog.hide()
+                self.on_beam_col_finished()
+
         elif event.key() == Qt.Key.Key_Delete:
             if getattr(self, 'is_locked', False):
                 self.status.showMessage("⚠️ Cannot delete objects while Analysis Results are active. Unlock model first.")
@@ -1905,11 +2277,11 @@ class MainWindow(QMainWindow):
             self.status.showMessage("Model is already editable. Run Analysis to lock.")
 
     def update_window_title(self):
-        """Updates window title to show currently active filename."""
-        base_title = "OPENCIVIL Analysis Engine"
+        """Updates window title to show currently active filename and version."""
+                                                              
+        base_title = "OpenCivil v0.7.55" 
         
         if self.model and getattr(self.model, 'file_path', None):
-                                                                            
             short_name = os.path.basename(self.model.file_path)
             self.setWindowTitle(f"{base_title} - [{short_name}]")
         else:
@@ -2362,6 +2734,29 @@ class MainWindow(QMainWindow):
             self.canvas.setCursor(Qt.CursorShape.ArrowCursor)
             self.canvas.single_use_pan_active = False
             self.status.showMessage("Ready")
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            if self.draw_mode_active:
+                if self.draw_dialog:
+                    self.draw_dialog.hide()
+                self.on_draw_finished()
+            if self.cross_brace_mode_active:
+                if self.cross_brace_dialog:
+                    self.cross_brace_dialog.hide()
+                self.on_cross_brace_finished()
+            if self.beam_col_mode_active:
+                if self.beam_col_dialog:
+                    self.beam_col_dialog.hide()
+                self.on_beam_col_finished()
+            
+            if hasattr(self, 'act_select'):
+                self.act_select.setChecked(True)
+        
+        elif event.key() == Qt.Key.Key_Delete:
+            if getattr(self, 'is_locked', False):
+                self.status.showMessage("⚠️ Cannot modify model while locked. Unlock first.")
+                return
 
     def _apply_canvas_view_settings(self, gs):
         """Applies project-level view toggles from a settings dict to the canvas."""

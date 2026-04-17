@@ -151,6 +151,42 @@ class MCanvas3D(gl.GLViewWidget):
         self.preview_line.setVisible(False)
         self.addItem(self.preview_line)
 
+        self.cross_brace_mode = False
+        self._brace_hover_cell = None
+
+        _dummy2 = np.array([[0,0,0],[1,1,0]], dtype=np.float32)
+        self._brace_prev_x1 = gl.GLLinePlotItem(pos=_dummy2, mode='lines',
+                                                  color=(1.0, 0.55, 0.0, 0.85), width=2.5, antialias=True)
+        self._brace_prev_x1.setGLOptions('translucent')
+        self._brace_prev_x1.setVisible(False)
+        self.addItem(self._brace_prev_x1)
+
+        self._brace_prev_x2 = gl.GLLinePlotItem(pos=_dummy2.copy(), mode='lines',
+                                                  color=(1.0, 0.55, 0.0, 0.85), width=2.5, antialias=True)
+        self._brace_prev_x2.setGLOptions('translucent')
+        self._brace_prev_x2.setVisible(False)
+        self.addItem(self._brace_prev_x2)
+
+        self._brace_prev_border = gl.GLLinePlotItem(
+            pos=np.zeros((5, 3), dtype=np.float32), mode='line_strip',
+            color=(1.0, 0.55, 0.0, 0.35), width=1.5, antialias=True)
+        self._brace_prev_border.setGLOptions('translucent')
+        self._brace_prev_border.setVisible(False)
+        self.addItem(self._brace_prev_border)
+
+        self.beam_col_mode = False
+        self._beam_col_hover_seg = None                                 
+        self._beam_col_type = 'beam'                          
+
+        _dummy3 = np.array([[0,0,0],[1,0,0]], dtype=np.float32)
+        self._beam_col_prev_line = gl.GLLinePlotItem(
+            pos=_dummy3, mode='lines',
+            color=(0.1, 0.8, 0.3, 0.9), width=3.5, antialias=True
+        )
+        self._beam_col_prev_line.setGLOptions('translucent')
+        self._beam_col_prev_line.setVisible(False)
+        self.addItem(self._beam_col_prev_line)
+
     def _line_intersects_rect(self, p1, p2, rect):
         """
         Robust Line Segment vs Rectangle Intersection.
@@ -301,6 +337,10 @@ class MCanvas3D(gl.GLViewWidget):
         if self.snap_ring not in self.items: self.addItem(self.snap_ring)
         if self.snap_dot not in self.items: self.addItem(self.snap_dot)
         if self.preview_line not in self.items: self.addItem(self.preview_line)
+        if self._brace_prev_x1 not in self.items: self.addItem(self._brace_prev_x1)
+        if self._brace_prev_x2 not in self.items: self.addItem(self._brace_prev_x2)
+        if self._brace_prev_border not in self.items: self.addItem(self._brace_prev_border)
+        if self._beam_col_prev_line not in self.items: self.addItem(self._beam_col_prev_line)
              
         self.snap_ring.setGLOptions('translucent')
         self.snap_dot.setGLOptions('translucent')
@@ -2226,7 +2266,21 @@ class MCanvas3D(gl.GLViewWidget):
             if getattr(self, 'single_use_pan_active', False):
                 self.setCursor(Qt.CursorShape.ClosedHandCursor)                           
                 return                                                      
-                                                 
+
+            if getattr(self, 'beam_col_mode', False):
+                if self._beam_col_hover_seg is not None:
+                    p1, p2 = self._beam_col_hover_seg
+                    mid = (p1 + p2) / 2.0
+                    self.signal_canvas_clicked.emit(float(mid[0]), float(mid[1]), float(mid[2]))
+                return
+
+            if getattr(self, 'cross_brace_mode', False):
+                pos = event.pos()
+                hit = self._raycast_to_plane(pos.x(), pos.y())
+                if hit is not None:
+                    self.signal_canvas_clicked.emit(float(hit[0]), float(hit[1]), float(hit[2]))
+                return
+
             if self.snapping_enabled:
                 pos = event.pos()
                 snap_coord = self.get_snap_point(pos.x(), pos.y())
@@ -2288,8 +2342,14 @@ class MCanvas3D(gl.GLViewWidget):
                 return
 
         elif event.buttons() == Qt.MouseButton.LeftButton:
-            self.show_pivot_dot(True)
-            super().mouseMoveEvent(event)
+                                                                                                  
+            is_drawing = (getattr(self, 'beam_col_mode', False) or 
+                          getattr(self, 'cross_brace_mode', False) or 
+                          self.snapping_enabled)
+            
+            if not is_drawing:
+                self.show_pivot_dot(True)
+                super().mouseMoveEvent(event)
 
         else:
             super().mouseMoveEvent(event)
@@ -2303,6 +2363,16 @@ class MCanvas3D(gl.GLViewWidget):
 
         if snap_pt is not None:
             self.signal_mouse_moved.emit(snap_pt[0], snap_pt[1], snap_pt[2])
+
+        if getattr(self, 'cross_brace_mode', False):
+            self.snap_ring.setVisible(False)
+            self.snap_dot.setVisible(False)
+            self._update_brace_preview(event.pos().x(), event.pos().y())
+
+        if getattr(self, 'beam_col_mode', False):
+            self.snap_ring.setVisible(False)
+            self.snap_dot.setVisible(False)
+            self._update_beam_col_preview(event.pos().x(), event.pos().y())
 
     def wheelEvent(self, event):
                          
@@ -2556,6 +2626,202 @@ class MCanvas3D(gl.GLViewWidget):
         screen_x = (ndc_x + 1) * w / 2
         screen_y = (1 - ndc_y) * h / 2
         return (screen_x, screen_y)
+
+    def _raycast_to_plane(self, mouse_x, mouse_y):
+        """Unprojects mouse position into world space and intersects with active_view_plane."""
+        if not self.active_view_plane:
+            return None
+        w, h = self.width(), self.height()
+        full_area = (0, 0, w, h)
+        m_view = self.viewMatrix()
+        m_proj = self.projectionMatrix(region=full_area, viewport=full_area)
+        mvp = np.array((m_proj * m_view).data()).reshape(4, 4).T
+        try:
+            inv_mvp = np.linalg.inv(mvp)
+        except np.linalg.LinAlgError:
+            return None
+
+        ndc_x =  (2.0 * mouse_x / w) - 1.0
+        ndc_y = -(2.0 * mouse_y / h) + 1.0
+
+        near_clip = np.dot(inv_mvp, np.array([ndc_x, ndc_y, -1.0, 1.0]))
+        far_clip  = np.dot(inv_mvp, np.array([ndc_x, ndc_y,  1.0, 1.0]))
+        if near_clip[3] == 0 or far_clip[3] == 0:
+            return None
+
+        near_w = near_clip[:3] / near_clip[3]
+        far_w  = far_clip[:3]  / far_clip[3]
+        ray_dir = far_w - near_w
+
+        axis     = self.active_view_plane['axis']
+        val      = self.active_view_plane['value']
+        axis_idx = {'x': 0, 'y': 1, 'z': 2}[axis]
+
+        denom = ray_dir[axis_idx]
+        if abs(denom) < 1e-9:
+            return None
+
+        t   = (val - near_w[axis_idx]) / denom
+        hit = near_w + t * ray_dir
+        return hit
+
+    def _find_grid_cell_from_hit(self, hit):
+        """Given a world point on the active plane, returns the 4 cell corners or None."""
+        if not self.active_view_plane or not self.current_model:
+            return None
+        grids = self.current_model.grid
+        axis  = self.active_view_plane['axis']
+        val   = self.active_view_plane['value']
+
+        def bracket(v, slist):
+            lo = hi = None
+            for gv in slist:
+                if gv <= v + 0.001: lo = gv
+                if gv >= v - 0.001 and hi is None: hi = gv; break
+            if lo is None or hi is None or abs(lo - hi) < 0.001: return None, None
+            return lo, hi
+
+        xs = sorted(grids.x_grids)
+        ys = sorted(grids.y_grids)
+        zs = sorted(grids.z_grids)
+        x, y, z = hit
+
+        if axis == 'z':
+            x_lo, x_hi = bracket(x, xs)
+            y_lo, y_hi = bracket(y, ys)
+            if None in [x_lo, x_hi, y_lo, y_hi]: return None
+            return [(x_lo,y_lo,val),(x_hi,y_lo,val),(x_hi,y_hi,val),(x_lo,y_hi,val)]
+        elif axis == 'x':
+            y_lo, y_hi = bracket(y, ys)
+            z_lo, z_hi = bracket(z, zs)
+            if None in [y_lo, y_hi, z_lo, z_hi]: return None
+            return [(val,y_lo,z_lo),(val,y_hi,z_lo),(val,y_hi,z_hi),(val,y_lo,z_hi)]
+        elif axis == 'y':
+            x_lo, x_hi = bracket(x, xs)
+            z_lo, z_hi = bracket(z, zs)
+            if None in [x_lo, x_hi, z_lo, z_hi]: return None
+            return [(x_lo,val,z_lo),(x_hi,val,z_lo),(x_hi,val,z_hi),(x_lo,val,z_hi)]
+        return None
+
+    def _update_brace_preview(self, mouse_x, mouse_y):
+        """Shows the orange X preview over the hovered grid cell."""
+        hit = self._raycast_to_plane(mouse_x, mouse_y)
+        if hit is None:
+            self._brace_hover_cell = None
+            self._brace_prev_x1.setVisible(False)
+            self._brace_prev_x2.setVisible(False)
+            self._brace_prev_border.setVisible(False)
+            return
+
+        corners = self._find_grid_cell_from_hit(hit)
+        if corners is None:
+            self._brace_hover_cell = None
+            self._brace_prev_x1.setVisible(False)
+            self._brace_prev_x2.setVisible(False)
+            self._brace_prev_border.setVisible(False)
+            return
+
+        self._brace_hover_cell = corners
+        c = corners
+
+        self._brace_prev_x1.setData(pos=np.array([c[0], c[2]], dtype=np.float32))
+        self._brace_prev_x2.setData(pos=np.array([c[1], c[3]], dtype=np.float32))
+
+        border = np.array([c[0], c[1], c[2], c[3], c[0]], dtype=np.float32)
+        self._brace_prev_border.setData(pos=border)
+
+        self._brace_prev_x1.setVisible(True)
+        self._brace_prev_x2.setVisible(True)
+        self._brace_prev_border.setVisible(True)
+        self.update()
+    
+    def _update_beam_col_preview(self, mouse_x, mouse_y):
+        """Highlights the nearest grid segment (beam or column) under the mouse."""
+        seg = self._find_nearest_grid_segment(mouse_x, mouse_y, self._beam_col_type)
+        if seg is None:
+            self._beam_col_hover_seg = None
+            self._beam_col_prev_line.setVisible(False)
+            self.update()
+            return
+        self._beam_col_hover_seg = seg
+        p1, p2 = seg
+        self._beam_col_prev_line.setData(pos=np.array([p1, p2], dtype=np.float32))
+        self._beam_col_prev_line.setVisible(True)
+        self.update()
+
+    def _find_nearest_grid_segment(self, mouse_x, mouse_y, member_type):
+        """
+        Project every candidate grid segment to screen and return the (p1, p2)
+        pair whose screen-space midpoint-to-line distance is smallest.
+        member_type: 'beam'  → horizontal X-dir and Y-dir segments
+                     'column'→ vertical Z-dir segments
+        """
+        if not self.current_model or not self.current_model.grid:
+            return None
+
+        w, h = self.width(), self.height()
+        full_area = (0, 0, w, h)
+        m_view = self.viewMatrix()
+        m_proj = self.projectionMatrix(region=full_area, viewport=full_area)
+        mvp = np.array((m_proj * m_view).data()).reshape(4, 4).T
+
+        grids = self.current_model.grid
+        xs = sorted(grids.x_grids)
+        ys = sorted(grids.y_grids)
+        zs = sorted(grids.z_grids)
+
+        best_seg  = None
+        best_dist = 18.0                         
+
+        if member_type == 'column':
+                                                               
+            for x in xs:
+                for y in ys:
+                    for k in range(len(zs) - 1):
+                        p1 = np.array([x, y, zs[k]])
+                        p2 = np.array([x, y, zs[k + 1]])
+                        d  = self._screen_dist_to_seg(p1, p2, mouse_x, mouse_y, mvp, w, h)
+                        if d is not None and d < best_dist:
+                            best_dist = d
+                            best_seg  = (p1, p2)
+        else:
+                                                                    
+            for y in ys:
+                for z in zs:
+                    for i in range(len(xs) - 1):
+                        p1 = np.array([xs[i],     y, z])
+                        p2 = np.array([xs[i + 1], y, z])
+                        d  = self._screen_dist_to_seg(p1, p2, mouse_x, mouse_y, mvp, w, h)
+                        if d is not None and d < best_dist:
+                            best_dist = d
+                            best_seg  = (p1, p2)
+                                                                    
+            for x in xs:
+                for z in zs:
+                    for j in range(len(ys) - 1):
+                        p1 = np.array([x, ys[j],     z])
+                        p2 = np.array([x, ys[j + 1], z])
+                        d  = self._screen_dist_to_seg(p1, p2, mouse_x, mouse_y, mvp, w, h)
+                        if d is not None and d < best_dist:
+                            best_dist = d
+                            best_seg  = (p1, p2)
+        return best_seg
+
+    def _screen_dist_to_seg(self, p1, p2, mx, my, mvp, w, h):
+        """Pixel distance from (mx, my) to the projected 3-D segment p1→p2."""
+        s1 = self._project_to_screen(p1[0], p1[1], p1[2], mvp, w, h)
+        s2 = self._project_to_screen(p2[0], p2[1], p2[2], mvp, w, h)
+        if s1 is None or s2 is None:
+            return None
+        x1, y1 = s1
+        x2, y2 = s2
+        l2 = (x2 - x1) ** 2 + (y2 - y1) ** 2
+        if l2 == 0:
+            return ((mx - x1) ** 2 + (my - y1) ** 2) ** 0.5
+        t  = max(0.0, min(1.0, ((mx - x1) * (x2 - x1) + (my - y1) * (y2 - y1)) / l2))
+        px = x1 + t * (x2 - x1)
+        py = y1 + t * (y2 - y1)
+        return ((mx - px) ** 2 + (my - py) ** 2) ** 0.5
     
     def keyPressEvent(self, event):
         super().keyPressEvent(event)

@@ -269,7 +269,8 @@ class CmdAssignInsertion(QUndoCommand):
     Handles Cardinal Points and Joint Offsets.
     Includes logic to transform Local offsets into Global for storage.
     """
-    def __init__(self, model, main_window, elem_ids, cardinal, raw_i, raw_j, coord_sys="Local"):
+                                       
+    def __init__(self, model, main_window, elem_ids, cardinal, raw_i, raw_j, coord_sys="Local", no_transform=False):
         super().__init__("Assign Insertion Point")
         self.model = model
         self.main_window = main_window
@@ -280,6 +281,8 @@ class CmdAssignInsertion(QUndoCommand):
         self.raw_j = raw_j                                  
         self.coord_sys = coord_sys
         
+        self.no_transform = no_transform
+        
         self.old_states = {}
         for eid in elem_ids:
             if eid in model.elements:
@@ -287,7 +290,9 @@ class CmdAssignInsertion(QUndoCommand):
                 self.old_states[eid] = (
                     el.cardinal_point, 
                     el.joint_offset_i.copy(), 
-                    el.joint_offset_j.copy()
+                    el.joint_offset_j.copy(),
+                                                                        
+                    getattr(el, 'do_not_transform_stiffness', False) 
                 )
 
     def redo(self):
@@ -297,12 +302,12 @@ class CmdAssignInsertion(QUndoCommand):
                 el = self.model.elements[eid]
                 el.cardinal_point = self.cardinal
                 
+                el.do_not_transform_stiffness = self.no_transform
+                
                 if self.coord_sys == "Global":
-                                                               
                     el.joint_offset_i = np.array(self.raw_i)
                     el.joint_offset_j = np.array(self.raw_j)
                 else:
-                                                                        
                     n1, n2 = el.node_i, el.node_j
                     p1 = np.array([n1.x, n1.y, n1.z])
                     p2 = np.array([n2.x, n2.y, n2.z])
@@ -335,12 +340,16 @@ class CmdAssignInsertion(QUndoCommand):
         self.main_window.canvas.draw_model(self.model)
 
     def undo(self):
-        for eid, (old_c, old_off_i, old_off_j) in self.old_states.items():
+                                                       
+        for eid, (old_c, old_off_i, old_off_j, old_no_trans) in self.old_states.items():
             if eid in self.model.elements:
                 el = self.model.elements[eid]
                 el.cardinal_point = old_c
                 el.joint_offset_i = old_off_i
                 el.joint_offset_j = old_off_j
+                
+                el.do_not_transform_stiffness = old_no_trans
+                
         self.main_window.canvas.draw_model(self.model)
         
 class CmdAssignJointLoad(QUndoCommand):
