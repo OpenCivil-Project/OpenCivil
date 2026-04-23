@@ -18,7 +18,7 @@ from PyQt6.QtCore import QUrl, pyqtSignal
 import qtawesome as qta
 from PyQt6.QtGui import QAction, QPixmap, QCursor, QVector3D, QColor, QIcon, QPainter, QFont
 from PyQt6.QtGui import QActionGroup
-
+import pyqtgraph.opengl as gl
 if getattr(sys, 'frozen', False):
 
     if hasattr(sys, '_MEIPASS'):
@@ -1425,13 +1425,15 @@ class MainWindow(QMainWindow):
                 if self.beam_col_dialog:
                     self.beam_col_dialog.hide()
                 self.on_beam_col_finished()
+            if hasattr(self, 'act_select'):
+                self.act_select.setChecked(True)  # ✅ from 2nd def
 
         elif event.key() == Qt.Key.Key_Delete:
             if getattr(self, 'is_locked', False):
                 self.status.showMessage("⚠️ Cannot delete objects while Analysis Results are active. Unlock model first.")
                 return
-            self.delete_current_selection()
-        
+            self.delete_current_selection()  # ✅ restored
+
         super().keyPressEvent(event)
         
     def handle_right_click(self):
@@ -2734,29 +2736,6 @@ class MainWindow(QMainWindow):
             self.canvas.setCursor(Qt.CursorShape.ArrowCursor)
             self.canvas.single_use_pan_active = False
             self.status.showMessage("Ready")
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Escape:
-            if self.draw_mode_active:
-                if self.draw_dialog:
-                    self.draw_dialog.hide()
-                self.on_draw_finished()
-            if self.cross_brace_mode_active:
-                if self.cross_brace_dialog:
-                    self.cross_brace_dialog.hide()
-                self.on_cross_brace_finished()
-            if self.beam_col_mode_active:
-                if self.beam_col_dialog:
-                    self.beam_col_dialog.hide()
-                self.on_beam_col_finished()
-            
-            if hasattr(self, 'act_select'):
-                self.act_select.setChecked(True)
-        
-        elif event.key() == Qt.Key.Key_Delete:
-            if getattr(self, 'is_locked', False):
-                self.status.showMessage("⚠️ Cannot modify model while locked. Unlock first.")
-                return
 
     def _apply_canvas_view_settings(self, gs):
         """Applies project-level view toggles from a settings dict to the canvas."""

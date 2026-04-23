@@ -79,7 +79,7 @@ class SolidResultsViewer(QMainWindow):
         self.dm      = solid_dm
         self.results = stress_results
         self.U_full  = U_full
-        self.scale_factor = 1.0
+        self.scale_factor = 0.0
 
         self.cut_enabled = False
         self.cut_axis    = 0          
@@ -147,13 +147,13 @@ class SolidResultsViewer(QMainWindow):
         side_layout.addSpacing(10)
 
         side_layout.addWidget(QLabel("DEFLECTION SCALE"))
-        self.lbl_scale = QLabel("Scale: 1.0x")
+        self.lbl_scale = QLabel("Scale: 0.0x")
         self.lbl_scale.setStyleSheet("color: #eee; font-weight: bold; font-family: Consolas;")
         side_layout.addWidget(self.lbl_scale)
 
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(0, 500) 
-        self.slider.setValue(1)
+        self.slider.setValue(0)
         
         self.slider.setStyleSheet("""
             QSlider::groove:horizontal { height: 4px; background: #DDDDDD; border-radius: 2px; }
@@ -163,8 +163,8 @@ class SolidResultsViewer(QMainWindow):
         side_layout.addWidget(self.slider)
 
         btn_lay = QHBoxLayout()
-        btn_reset = QPushButton("REAL (1x)")
-        btn_reset.clicked.connect(lambda: self.slider.setValue(1))
+        btn_reset = QPushButton("REAL (0x)")
+        btn_reset.clicked.connect(lambda: self.slider.setValue(0))
         btn_auto = QPushButton("MAX (100x)")
         btn_auto.clicked.connect(lambda: self.slider.setValue(100))
         btn_lay.addWidget(btn_reset)
@@ -300,16 +300,26 @@ class SolidResultsViewer(QMainWindow):
         for node in nodes:
             coords[node['idx']] = node['coords']
 
-        self._elem_stress_arr = self._get_stress_array(component)
-        node_idx_list = [el['node_indices'] for el in elements]
-        node_stress   = element_to_node_stresses(self._elem_stress_arr, n_nodes, node_idx_list)
+        # ── MESH PREVIEW MODE (no stress results) ──────────────────────────────
+        # When called from Preview Mesh, stresses=[] so results is empty.
+        # Guard here instead of crashing inside _get_stress_array / element_to_node_stresses.
+        is_preview_only = (len(self.results) == 0)
 
-        if component == "von_mises":
-            vmin = float(np.percentile(node_stress, 2))
-            vmax = float(np.percentile(node_stress, 98))
-            node_colors, _, _ = stress_to_colors(node_stress, vmin=vmin, vmax=vmax)
+        if is_preview_only:
+            node_colors = np.full((n_nodes, 4), [0.55, 0.65, 0.72, 1.0], dtype=np.float32)
+            vmin, vmax  = 0.0, 0.0
         else:
-            node_colors, vmin, vmax = stress_to_colors(node_stress)
+            self._elem_stress_arr = self._get_stress_array(component)
+            node_idx_list = [el['node_indices'] for el in elements]
+            node_stress   = element_to_node_stresses(self._elem_stress_arr, n_nodes, node_idx_list)
+
+            if component == "von_mises":
+                vmin = float(np.percentile(node_stress, 2))
+                vmax = float(np.percentile(node_stress, 98))
+                node_colors, _, _ = stress_to_colors(node_stress, vmin=vmin, vmax=vmax)
+            else:
+                node_colors, vmin, vmax = stress_to_colors(node_stress)
+        # ───────────────────────────────────────────────────────────────────────
 
         self._node_coords_arr = coords.astype(np.float32)
         if self.U_full is not None:
@@ -352,7 +362,7 @@ class SolidResultsViewer(QMainWindow):
                         dy = self.U_full[n_idx*3 + 1]
                         dz = self.U_full[n_idx*3 + 2]
                         all_deltas.append([dx, dy, dz])
-                
+
                 face_elem_mapping.append(elem_idx)
 
         self.face_to_elem = np.array(face_elem_mapping, dtype=int)
@@ -366,8 +376,8 @@ class SolidResultsViewer(QMainWindow):
 
         self.current_verts = self.base_verts + self.delta_verts * self.scale_factor
 
-        n_tris      = len(self.base_verts) // 3
-        self.faces  = np.arange(n_tris * 3, dtype=np.uint32).reshape(n_tris, 3)
+        n_tris     = len(self.base_verts) // 3
+        self.faces = np.arange(n_tris * 3, dtype=np.uint32).reshape(n_tris, 3)
 
         self.mesh_item = GLMeshItem(
             vertexes=self.current_verts, faces=self.faces,
@@ -391,12 +401,19 @@ class SolidResultsViewer(QMainWindow):
             self.gl_view.opts['azimuth']   = -120
             self._camera_set = True
 
-        self.colorbar.update_range(vmin, vmax, f"{component} (Pa)")
-        self.stats_label.setText(
-            f"Min: {vmin:.3e}\nMax: {vmax:.3e}\n\n"
-            f"Nodes: {n_nodes}\nElems: {len(elements)}"
-        )
-
+        if is_preview_only:
+            self.colorbar.update_range(0, 1, "MESH PREVIEW")
+            self.stats_label.setText(
+                f"MESH PREVIEW\n(run full analysis for stress)\n\n"
+                f"Nodes: {n_nodes}\nElems: {len(elements)}"
+            )
+        else:
+            self.colorbar.update_range(vmin, vmax, f"{component} (Pa)")
+            self.stats_label.setText(
+                f"Min: {vmin:.3e}\nMax: {vmax:.3e}\n\n"
+                f"Nodes: {n_nodes}\nElems: {len(elements)}"
+            )
+                  
     def _update_axis_btn_styles(self):
         for i, btn in enumerate(self._cut_axis_btns):
             if btn.isChecked():
@@ -590,7 +607,19 @@ class SolidResultsViewer(QMainWindow):
         self._selected_elem_idx = hit_elem_idx
         self._update_highlight()
 
-        el_data = self.dm.elements[hit_elem_idx]
+        el_data  = self.dm.elements[hit_elem_idx]
+        node_ids = [self.dm.nodes[ni].get('id', ni+1) for ni in el_data['node_indices']]
+
+        # Preview mode: no stress results loaded yet
+        if self._elem_stress_arr is None:
+            self._query_lbl.setText(
+                f"ELEMENT #{el_data.get('id', hit_elem_idx+1)}\n"
+                f"Type: Tetra\n"
+                f"Nodes: {node_ids}\n\n"
+                f"(No stress — run full\nanalysis first)"
+            )
+            return
+
         s_val = self._elem_stress_arr[hit_elem_idx]
         comp  = self._current_component
         
@@ -642,6 +671,20 @@ class SolidResultsViewer(QMainWindow):
         )
         self._highlight_item.setGLOptions('translucent')
         self.gl_view.addItem(self._highlight_item)
+
+    def closeEvent(self, event):
+        """
+        Clear every GL item before Qt tears down the OpenGL context.
+        Without this, pyqtgraph's GLMeshItem.paint() fires one last time
+        on a dead context and crashes with:
+            AttributeError: 'NoneType' object has no attribute 'hasExtension'
+        """
+        try:
+            for item in list(self.gl_view.items):
+                self.gl_view.removeItem(item)
+        except Exception:
+            pass
+        super().closeEvent(event)
 
 class _DmProxy:
     def __init__(self, nodes, elements, total_dofs):

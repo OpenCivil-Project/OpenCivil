@@ -2879,18 +2879,15 @@ class MCanvas3D(gl.GLViewWidget):
                 
                 if load.coord_system == "Local":
                     load_vec = [v1_ax, v2_ax, v3_ax][axis_idx]
-                    base_rgb = (0.1, 0.1, 0.1)                            
-                else:         
-                    load_vec = np.zeros(3); load_vec[axis_idx] = 1.0  
-                    if axis_idx == 2 and sign < 0:
-                        base_rgb = (0.2, 0.5, 0.9)                   
-                    else:
-                        base_rgb = (0.4, 0.4, 0.4)
-                
-                c_ghost      = (*base_rgb, 0.15)                                
-                c_ghost_line = (*base_rgb, 0.30)                 
-                c_sel_fill   = (*base_rgb, 0.40)                               
-                c_line       = (*base_rgb, 1.00)                                   
+                else:
+                    load_vec = np.zeros(3); load_vec[axis_idx] = 1.0
+
+                base_rgb = (0.0, 0.0, 0.0)
+
+                c_ghost      = (*base_rgb, 0.25)
+                c_ghost_line = (*base_rgb, 0.60)
+                c_sel_fill   = (*base_rgb, 0.55)
+                c_line       = (*base_rgb, 1.00)                                  
 
                 offset_vec = -1 * sign * load_vec * scale 
                 cross_prod = np.cross(beam_dir, load_vec)

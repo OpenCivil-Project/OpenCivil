@@ -353,6 +353,206 @@ class SolidDataManager:
         if count:
             print(f"  SolidDataManager: injected {count} self-weight nodal loads "
                   f"for patterns {list(sw_patterns.keys())}")
+            
+    def prep_submodel_boundaries(self, selected_element_ids, linear_results_path):
+        """
+        Identifies the boundary 'Cut Nodes' between selected and unselected elements,
+        extracts their global displacements, and preps them as fixed boundaries.
+        """
+        import json
+        
+        print("SolidDataManager: Prepping Submodel Boundaries...")
+        
+        # 1. Load the linear static results
+        try:
+            with open(linear_results_path, 'r') as f:
+                results = json.load(f)
+        except Exception as e:
+            raise RuntimeError(f"Could not load linear results from {linear_results_path}: {e}")
+            
+        displacements = results.get("displacements", {})
+        
+        # 2. Identify the Cut Nodes
+        selected_nodes = set()
+        unselected_nodes = set()
+        
+        for el in self.raw.get('elements', []):
+            if el['id'] in selected_element_ids:
+                selected_nodes.add(el['n1_id'])
+                selected_nodes.add(el['n2_id'])
+            else:
+                unselected_nodes.add(el['n1_id'])
+                unselected_nodes.add(el['n2_id'])
+                
+        # The cut boundary is strictly where selected elements meet unselected elements
+        cut_nodes = selected_nodes.intersection(unselected_nodes)
+        
+        # Also include any nodes within the selection that are actual global supports
+        for n in self.raw.get('nodes', []):
+            if n['id'] in selected_nodes and any(n.get('restraints', [False]*6)):
+                cut_nodes.add(n['id'])
+
+        print(f"  -> Identified Cut Nodes: {list(cut_nodes)}")
+
+        # 3. Store prescribed displacements & trick the mesher
+        self.prescribed_displacements = {}  # Format: { node_idx: [Ux, Uy, Uz, Rx, Ry, Rz] }
+        
+        count = 0
+        for n in self.nodes:
+            if n['id'] in cut_nodes:
+                nid_str = str(n['id'])
+                if nid_str in displacements:
+                    # Save the 6-DOF displacement to apply in the SolidAssembler later
+                    self.prescribed_displacements[n['idx']] = displacements[nid_str]
+                    
+                    # THE TRICK: Flag as fully restrained so SolidMesher builds Rigid Links here!
+                    n['restraints'] = [True, True, True, True, True, True]
+                    count += 1
+                else:
+                    print(f"  Warning: Cut Node {n['id']} not found in linear results!")
+                    
+        print(f"  -> Loaded exact global displacements for {count} boundary nodes.")
+
+    def prep_submodel_boundaries_force_based(self, selected_element_ids,
+                                              linear_results_path, matrices_path):
+        """
+        Force-based submodeling.
+
+        Instead of imposing global displacements at cut nodes (which requires
+        the K_fs * U_s partition trick), this method:
+          1. Computes the internal end-forces at the cut from the global frame solution
+          2. Applies them as external nodal loads on the rigid-link master DOFs
+          3. Real support nodes inside the selection still get disp=0 BCs to kill RBD
+
+        Inputs
+        ------
+        selected_element_ids : set/list of frame element IDs in the submodel
+        linear_results_path  : path to  *_results.json  (displacements per node)
+        matrices_path        : path to  *_matrices.json (k, t, fef per element)
+
+        Outputs stored on self
+        ----------------------
+        self.cut_node_forces              : {node_id: np.array(6,) global}
+        self.cut_nodes                    : set of node IDs with force BCs
+        self.support_nodes_in_selection   : set of node IDs with disp=0 BCs
+        """
+        import json
+
+        print("SolidDataManager: Prepping Force-Based Submodel Boundaries...")
+
+        # ── 1. Load frame results and element matrices ────────────────────────
+        try:
+            with open(linear_results_path, 'r') as f:
+                results = json.load(f)
+            with open(matrices_path, 'r') as f:
+                matrices = json.load(f)
+        except Exception as e:
+            raise RuntimeError(f"Could not load results/matrices: {e}")
+
+        displacements = results.get("displacements", {})
+
+        # ── 2. Classify nodes ─────────────────────────────────────────────────
+        selected_nodes   = set()
+        unselected_nodes = set()
+
+        for el in self.raw.get('elements', []):
+            ni, nj = el['n1_id'], el['n2_id']
+            if el['id'] in selected_element_ids:
+                selected_nodes.add(ni)
+                selected_nodes.add(nj)
+            else:
+                unselected_nodes.add(ni)
+                unselected_nodes.add(nj)
+
+        # Nodes shared between inside and outside frame elements
+        boundary_cut_nodes = selected_nodes & unselected_nodes
+
+        # Real physical supports inside the selection — these kill rigid body motion
+        support_nodes_in_selection = set()
+        for n in self.raw.get('nodes', []):
+            if n['id'] in selected_nodes and any(n.get('restraints', [False] * 6)):
+                support_nodes_in_selection.add(n['id'])
+
+        # All nodes that need a rigid link in the solid mesh
+        all_rigid_link_nodes = boundary_cut_nodes | support_nodes_in_selection
+
+        print(f"  -> Boundary cut nodes  (force BCs) : {sorted(boundary_cut_nodes)}")
+        print(f"  -> Support nodes in selection (disp=0): {sorted(support_nodes_in_selection)}")
+
+        # ── 3. Compute cut forces for every crossing element ──────────────────
+        # A crossing element is OUTSIDE the selection AND touches a cut node.
+        self.cut_node_forces = {}   # node_id → np.array(6,) in global coords
+
+        for el in self.raw.get('elements', []):
+            if el['id'] in selected_element_ids:
+                continue  # purely inside — not a crossing element
+
+            ni_id, nj_id = el['n1_id'], el['n2_id']
+            ni_is_cut = ni_id in boundary_cut_nodes
+            nj_is_cut = nj_id in boundary_cut_nodes
+
+            if not ni_is_cut and not nj_is_cut:
+                continue  # not touching the cut boundary
+
+            str_id = str(el['id'])
+            if str_id not in matrices:
+                print(f"  Warning: No matrix data for element {el['id']}, skipping.")
+                continue
+
+            mat_data = matrices[str_id]
+            k   = np.array(mat_data['k'])    # 12×12 local stiffness
+            t   = np.array(mat_data['t'])    # 12×12 T_total = T_ecc @ T_rot
+            fef = np.array(mat_data['fef'])  # 12   fixed-end forces (local)
+
+            u_i = np.array(displacements.get(str(ni_id), [0.0] * 6))
+            u_j = np.array(displacements.get(str(nj_id), [0.0] * 6))
+            u_global_12 = np.concatenate([u_i, u_j])
+
+            # Same formula as element_forces.py → end forces in LOCAL coords
+            end_forces_local = k @ (t @ u_global_12) + fef
+
+            # t[0:3, 0:3] == R_3x3  because T_ecc[0:3,0:3] == eye(3)
+            R_3x3 = t[0:3, 0:3]
+
+            def _to_global(F_loc6):
+                """Rotate a 6-DOF local force vector to global coords."""
+                out = np.zeros(6)
+                out[0:3] = R_3x3.T @ F_loc6[0:3]   # forces
+                out[3:6] = R_3x3.T @ F_loc6[3:6]   # moments
+                return out
+
+            if ni_is_cut:
+                F_g = _to_global(end_forces_local[0:6])
+                # FIX: Apply the opposite force to the boundary node
+                self.cut_node_forces[ni_id] = (
+                    self.cut_node_forces.get(ni_id, np.zeros(6)) - F_g
+                )
+
+            if nj_is_cut:
+                F_g = _to_global(end_forces_local[6:12])
+                # FIX: Apply the opposite force to the boundary node
+                self.cut_node_forces[nj_id] = (
+                    self.cut_node_forces.get(nj_id, np.zeros(6)) - F_g
+                )
+
+        print(f"  -> Computed cut forces for {len(self.cut_node_forces)} boundary nodes:")
+        for nid, F in self.cut_node_forces.items():
+            print(f"     Node {nid}: "
+                  f"Fx={F[0]:.3f}  Fy={F[1]:.3f}  Fz={F[2]:.3f} | "
+                  f"Mx={F[3]:.3f}  My={F[4]:.3f}  Mz={F[5]:.3f}")
+
+        # ── 4. Flag nodes so SolidMesher creates rigid links at them ──────────
+        # The assembler will later differentiate: cut_nodes → force BC,
+        # support_nodes_in_selection → disp=0 BC.
+        self.cut_nodes                  = boundary_cut_nodes
+        self.support_nodes_in_selection = support_nodes_in_selection
+
+        for n in self.nodes:
+            if n['id'] in all_rigid_link_nodes:
+                n['restraints'] = [True, True, True, True, True, True]
+
+        print(f"  -> Force-based boundary prep complete. "
+              f"{len(all_rigid_link_nodes)} rigid-link nodes flagged.")
 
 if __name__ == "__main__":
     import sys

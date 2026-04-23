@@ -49,51 +49,122 @@ class SolidAssembler:
 
     def solve(self):
         """
-        Applies 3-DOF Boundary Conditions and solves natively.
-        Returns (U_full, Reactions).
+        Applies BCs and solves.  Supports two submodeling modes:
+
+        Displacement-based (legacy):
+            self.dm.prescribed_displacements is set.
+            Cut-node rigid-link masters are pinned at the global U values.
+            Requires K_fs * U_s correction to the RHS.
+
+        Force-based (new):
+            self.dm.cut_node_forces is set.
+            Cut-node rigid-link masters stay FREE; their cut forces are
+            injected directly into P.  No K_fs correction needed for those DOFs.
+            Real supports inside the selection still use disp=0 BCs.
         """
-        print("SolidAssembler: Applying Boundary Conditions...")
-        
+        print("SolidAssembler: Applying Boundary Conditions and Partitioning...")
+
         is_free = np.ones(self.dm.total_dofs, dtype=bool)
-        
+        U_full  = np.zeros(self.dm.total_dofs)
+
+        # ── Detect operating mode ─────────────────────────────────────────────
+        is_force_based = hasattr(self.dm, 'cut_node_forces')
+        cut_nodes      = getattr(self.dm, 'cut_nodes', set())          # force-BC nodes
+        if is_force_based:
+            print("  Mode: Force-Based Submodeling")
+
+        # ── 1. Standard solid node restraints (mesh-level pins) ───────────────
         for node in self.dm.nodes:
-            start_idx = node['idx'] * 3                          
-            restraints = node['restraints']                           
-            
+            start_idx  = node['idx'] * 3
+            restraints = node['restraints']
             for i in range(3):
-                if restraints[i]:                  
+                if restraints[i]:
                     is_free[start_idx + i] = False
 
+        # ── Helper: find raw frame node closest to a set of coords ────────────
+        def _find_raw_node(master_coords):
+            for raw_n in self.dm.raw['nodes']:
+                if (abs(raw_n['x'] - master_coords[0]) < 1e-5 and
+                        abs(raw_n['y'] - master_coords[1]) < 1e-5 and
+                        abs(raw_n['z'] - master_coords[2]) < 1e-5):
+                    return raw_n
+            return None
+
+        # ── Helper: prescribed displacement lookup (legacy disp-based mode) ───
+        old_id_to_idx = {}
+        if hasattr(self.dm, 'prescribed_displacements'):
+            user_ids = sorted(n['id'] for n in self.dm.raw['nodes'])
+            old_id_to_idx = {uid: i for i, uid in enumerate(user_ids)}
+
+        def _get_prescribed(raw_n):
+            if not hasattr(self.dm, 'prescribed_displacements') or raw_n is None:
+                return [0.0] * 6
+            old_idx = old_id_to_idx.get(raw_n['id'])
+            if old_idx is not None and old_idx in self.dm.prescribed_displacements:
+                return self.dm.prescribed_displacements[old_idx]
+            return [0.0] * 6
+
+        # ── 2. Rigid-link master DOF constraints ──────────────────────────────
         if hasattr(self.dm, 'rigid_links'):
             for rl in self.dm.rigid_links:
-                start_idx = rl['master_dof_start']
-                restraints = rl['restraints']                           
-                for i in range(6):
-                    if restraints[i]:                  
-                        is_free[start_idx + i] = False
+                m_start    = rl['master_dof_start']
+                restraints = rl['restraints']
+                raw_n      = _find_raw_node(rl['master_coords'])
+                node_id    = raw_n['id'] if raw_n else None
 
-        K_csc = self.K.tocsc()
-        K_ff = K_csc[is_free, :][:, is_free]
-        P_f = self.P[is_free]
+                # Force-based cut node → leave master DOFs FREE.
+                # Forces will be injected into P in step 3 below.
+                if is_force_based and node_id in cut_nodes:
+                    continue
+
+                # Everything else: displacement BC (either prescribed or zero)
+                prescribed_disp = _get_prescribed(raw_n)
+                for i in range(6):
+                    if restraints[i]:
+                        is_free[m_start + i] = False
+                        U_full[m_start + i]  = prescribed_disp[i]
+
+        # ── 3. Inject cut forces into P (force-based mode only) ───────────────
+        if is_force_based and hasattr(self.dm, 'rigid_links'):
+            cut_forces = self.dm.cut_node_forces or {}
+            for rl in self.dm.rigid_links:
+                raw_n = _find_raw_node(rl['master_coords'])
+                if raw_n and raw_n['id'] in cut_forces:
+                    F   = cut_forces[raw_n['id']]
+                    m   = rl['master_dof_start']
+                    self.P[m : m + 6] += F
+                    print(f"  [Force BC] Node {raw_n['id']} master DOF {m}: "
+                          f"F=[{F[0]:.2f}, {F[1]:.2f}, {F[2]:.2f}] "
+                          f"M=[{F[3]:.2f}, {F[4]:.2f}, {F[5]:.2f}]")
+
+        # ── 4. Partition: K_ff * U_f = P_f - K_fs * U_s ──────────────────────
+        K_csc   = self.K.tocsc()
+        is_supp = ~is_free
+
+        K_ff = K_csc[is_free,  :][:, is_free ]
+        K_fs = K_csc[is_free,  :][:, is_supp ]
+        P_f  = self.P[is_free]
+        U_s  = U_full[is_supp]
+        P_eff = P_f - K_fs.dot(U_s)   # zero correction for force-based cut nodes (U_s=0 there)
 
         if K_ff.shape[0] == 0:
             print("Warning: Structure is fully constrained (0 free DOFs).")
-            return np.zeros(self.dm.total_dofs), self.P
+            return U_full, self.P
 
         print(f"SolidAssembler: Solving system with {K_ff.shape[0]} equations...")
         try:
-            U_f = spsolve(K_ff, P_f)
+            U_f = spsolve(K_ff, P_eff)
         except (RuntimeError, ValueError) as e:
             raise Exception(f"Math Error during spsolve: {str(e)}")
 
-        U_full = np.zeros(self.dm.total_dofs)
+        # ── 5. Reconstruct & reactions ────────────────────────────────────────
         U_full[is_free] = U_f
 
         print("SolidAssembler: Computing Reactions...")
         Reactions = self.K.dot(U_full) - self.P
 
         return U_full, Reactions
-
+    
     def _build_stiffness(self):
         for el in self.dm.elements:
             mat   = el['material']

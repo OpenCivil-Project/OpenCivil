@@ -12,6 +12,9 @@ Features:
 
 import numpy as np
 import gmsh
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from linear_static.element_library import get_rotation_matrix
 
 class SolidMesher:
     def __init__(self, solid_data_manager, mesh_size=0.15, merge_tol=1e-6, **kwargs):
@@ -91,6 +94,9 @@ class SolidMesher:
             gmsh.model.occ.fuse([vols[0]], vols[1:])
         gmsh.model.occ.synchronize()
 
+        gmsh.model.occ.removeAllDuplicates()
+        gmsh.model.occ.synchronize()
+
         print("  SolidMesher: Generating Tet10 mesh...")
         gmsh.option.setNumber("Mesh.CharacteristicLengthMin", self.mesh_size)
         gmsh.option.setNumber("Mesh.CharacteristicLengthMax", self.mesh_size)
@@ -104,6 +110,99 @@ class SolidMesher:
         self.dm._generate_self_weight()
 
         print(f"SolidMesher: done. "
+              f"{len(self.dm.nodes)} nodes, "
+              f"{len(self.dm.elements)} elements, "
+              f"{self.dm.total_dofs} DOFs.")
+
+    def mesh_subset(self, selected_element_ids):
+        """
+        Builds CSG geometry ONLY for the selected frame elements,
+        meshes via Gmsh, and populates dm.
+        """
+        raw_elements  = self.dm.raw.get('elements', [])
+        
+        # --- THE MAGIC FILTER ---
+        # Only grab the elements the user selected
+        target_elements = [el for el in raw_elements if el['id'] in selected_element_ids]
+        
+        if not target_elements:
+            print("  SolidMesher: No valid elements selected for submodeling.")
+            return
+
+        raw_sections  = {s['name']: s for s in self.dm.raw.get('sections', [])}
+        raw_nodes_map = {n['id']: n for n in self.dm.raw['nodes']}
+
+        print(f"SolidMesher: Building subset geometry for elements {selected_element_ids} (mesh_size={self.mesh_size})...")
+
+        import signal as _signal
+        _orig_signal = _signal.signal
+        _signal.signal = lambda *a, **kw: None
+        gmsh.initialize()
+        _signal.signal = _orig_signal
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.model.add("OpenCivil_Submodel")
+
+        vols = []
+        global_mat = None
+
+        # Loop over TARGET elements instead of RAW elements
+        for el in target_elements:
+            sec = raw_sections.get(el['sec_name'])
+            if not sec: continue
+
+            if global_mat is None:
+                mat_name = sec.get('mat_name', list(self.dm.materials.keys())[0])
+                global_mat = self.dm.materials.get(mat_name)
+
+            b, h = self._section_bbox(sec)
+            n1d = raw_nodes_map[el['n1_id']]
+            n2d = raw_nodes_map[el['n2_id']]
+            p1  = np.array([n1d['x'], n1d['y'], n1d['z']], dtype=float)
+            p2  = np.array([n2d['x'], n2d['y'], n2d['z']], dtype=float)
+
+            off_i = np.array(el.get('off_i', [0.0, 0.0, 0.0]), dtype=float)
+            off_j = np.array(el.get('off_j', [0.0, 0.0, 0.0]), dtype=float)
+            p1_adj = p1 + off_i
+            p2_adj = p2 + off_j
+
+            L = np.linalg.norm(p2_adj - p1_adj)
+            if L < 1e-9: continue
+
+            cardinal = el.get('cardinal', 10)
+            cp_y, cp_z = self._cardinal_offset(cardinal, b, h)
+
+            vol_tag = self._add_section_volume(sec, L, cp_y, cp_z)
+            if vol_tag is None:
+                continue
+
+            T = self._get_transform_matrix(p1_adj, p2_adj, el.get('beta', 0.0))
+            gmsh.model.occ.affineTransform([(3, vol_tag)], T)
+            vols.append((3, vol_tag))
+
+        if not vols:
+            print("  SolidMesher: No valid volumes generated for subset.")
+            gmsh.finalize()
+            return
+
+        print("  SolidMesher: Executing Boolean Union (Fuse) on subset...")
+        if len(vols) > 1:
+            gmsh.model.occ.fuse([vols[0]], vols[1:])
+        gmsh.model.occ.synchronize()
+
+        print("  SolidMesher: Generating Tet10 mesh for subset...")
+        gmsh.option.setNumber("Mesh.CharacteristicLengthMin", self.mesh_size)
+        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", self.mesh_size)
+        gmsh.option.setNumber("Mesh.ElementOrder", 2)
+        
+        gmsh.model.mesh.generate(3)
+
+        # Extract only using the target elements so rigid links don't try to attach to the whole building
+        self._extract_and_populate(global_mat, target_elements, raw_sections)
+        gmsh.finalize()
+
+        self.dm._generate_self_weight()
+
+        print(f"SolidMesher: Subset meshing done. "
               f"{len(self.dm.nodes)} nodes, "
               f"{len(self.dm.elements)} elements, "
               f"{self.dm.total_dofs} DOFs.")
@@ -254,54 +353,42 @@ class SolidMesher:
     def _cardinal_offset(self, cardinal, b, h):
         """
         Returns (offset_y, offset_z) in local coords to shift box origin.
-        Cardinal point grid (SAP2000 convention):
-            7---8---9
-            |       |
-            4   5   6
-            |       |
-            1---2---3
-        10 = centroid (default, no offset)
-        Box is always drawn from (-b/2, -h/2) so offsets shift relative to centroid.
+        Matches the sign convention from mesh.py exactly.
         """
-                                                    
         offsets = {
-            1:  (-b/2,  -h/2),                
-            2:  ( 0,    -h/2),                  
-            3:  (+b/2,  -h/2),                 
-            4:  (-b/2,   0  ),                
-            5:  ( 0,     0  ),                             
-            6:  (+b/2,   0  ),                 
-            7:  (-b/2,  +h/2),             
-            8:  ( 0,    +h/2),               
-            9:  (+b/2,  +h/2),              
-            10: ( 0,     0  ),                         
-            11: ( 0,     0  ),                                           
+            1:  (+b/2,  +h/2),                
+            2:  ( 0.0,  +h/2),                  
+            3:  (-b/2,  +h/2),                 
+            4:  (+b/2,   0.0),                
+            5:  ( 0.0,   0.0),                             
+            6:  (-b/2,   0.0),                 
+            7:  (+b/2,  -h/2),             
+            8:  ( 0.0,  -h/2),               
+            9:  (-b/2,  -h/2),              
+            10: ( 0.0,   0.0),                         
+            11: ( 0.0,   0.0),                                           
         }
-        return offsets.get(cardinal, (0, 0))
+        return offsets.get(cardinal, (0.0, 0.0))
 
     def _get_transform_matrix(self, p1, p2, beta_deg):
         """Builds a 4x4 row-major affine transformation matrix for Gmsh."""
-        V_x = p2 - p1
-        L   = np.linalg.norm(V_x)
-        vx  = V_x / L
+        R = get_rotation_matrix(p1, p2, beta_deg)
+        
+        vx_frame = R[0]
+        vy_frame = R[1]
+        vz_frame = R[2]
 
-        if abs(vx[2]) > 0.999:
-            temp = np.array([1.0, 0.0, 0.0])
-        else:
-            temp = np.array([0.0, 0.0, 1.0])
-
-        vy = np.cross(temp, vx); vy /= np.linalg.norm(vy)
-        vz = np.cross(vx, vy)
-
-        c, s = np.cos(np.radians(beta_deg)), np.sin(np.radians(beta_deg))
-        vy_f = vy * c + vz * s
-        vz_f = -vy * s + vz * c
+        # Direct Mapping: Gmsh draws width on Y and height on Z.
+        # This matches Frame Local 2 (Width) and Local 3 (Height) exactly.
+        x_g = vx_frame
+        y_g = vy_frame 
+        z_g = vz_frame 
 
         return [
-            vx[0], vy_f[0], vz_f[0], p1[0],
-            vx[1], vy_f[1], vz_f[1], p1[1],
-            vx[2], vy_f[2], vz_f[2], p1[2],
-            0.0,   0.0,     0.0,     1.0
+            x_g[0], y_g[0], z_g[0], p1[0],
+            x_g[1], y_g[1], z_g[1], p1[1],
+            x_g[2], y_g[2], z_g[2], p1[2],
+            0.0,    0.0,    0.0,    1.0
         ]
 
     def _extract_and_populate(self, mat, raw_elements, raw_sections):

@@ -182,6 +182,78 @@ def run_solid_analysis(mf_path, case_name="DEAD",
 
     return True, dm, stress_results, U
 
+
+def run_submodel_analysis(mf_path, selected_ids, case_name="DEAD", mesh_size=0.15, launch_viewer=False):
+    """
+    Runs the specialized Local Solid Submodel pipeline on selected elements.
+    """
+    print("=" * 60)
+    print("OPENCIVIL — SOLID SUBMODEL ENGINE")
+    print(f"Targeting Elements: {selected_ids}")
+    print("=" * 60)
+
+    start = time.time()
+    results_path = mf_path.replace(".mf", f"_{case_name}_results.json")
+
+    if not os.path.exists(results_path):
+        _fail(f"Linear static results not found at {results_path}. Run main solver first!")
+        return False, None, [], None
+
+    try:
+        print("[1/5] Initializing Data Manager & Linear Results...")
+        from solid_data_manager import SolidDataManager
+        from solid_mesher import SolidMesher, patch_data_manager
+        from solid_assembler import SolidAssembler
+
+        dm = SolidDataManager(mf_path)
+        dm.process_all(case_name=case_name)
+        patch_data_manager(dm)
+
+        # Force-based submodeling: derive cut forces from stored frame matrices.
+        # Falls back to legacy displacement-based if matrices JSON is missing.
+        matrices_path = mf_path.replace(".mf", f"_{case_name}_matrices.json")
+        if os.path.exists(matrices_path):
+            dm.prep_submodel_boundaries_force_based(
+                selected_ids, results_path, matrices_path
+            )
+        else:
+            print(f"  Warning: {os.path.basename(matrices_path)} not found.")
+            print(f"  Falling back to displacement-based submodeling.")
+            dm.prep_submodel_boundaries(selected_ids, results_path)
+
+        print("[2/5] Meshing Submodel Selection...")
+        mesher = SolidMesher(dm, mesh_size=mesh_size)
+        mesher.mesh_subset(selected_ids)
+
+        print("[3/5] Assembling Local Stiffness Matrix...")
+        asm = SolidAssembler(dm)
+        K, P = asm.assemble_system()
+
+        print("[4/5] Solving with Imposed Boundaries...")
+        U, R = asm.solve()
+
+        print("[5/5] Computing Element Stresses...")
+        stress_results = asm.compute_element_stresses(U)
+
+        elapsed = time.time() - start
+        print("=" * 60)
+        print(f"SUBMODEL ANALYSIS COMPLETE — {elapsed:.2f}s")
+        print("=" * 60)
+
+        if launch_viewer:
+            from solid_main_engine import _launch_viewer
+            _launch_viewer(dm, stress_results, U)
+
+        return True, dm, stress_results, U
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        _fail(f"Submodel Error: {e}")
+        return False, None, [], None
+    
+    
+
 def _launch_viewer(dm, stress_results, U_full):
     """Launches SolidResultsViewer in a PyQt6 window."""
     try:
