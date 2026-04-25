@@ -121,8 +121,6 @@ class SolidMesher:
         """
         raw_elements  = self.dm.raw.get('elements', [])
         
-        # --- THE MAGIC FILTER ---
-        # Only grab the elements the user selected
         target_elements = [el for el in raw_elements if el['id'] in selected_element_ids]
         
         if not target_elements:
@@ -145,7 +143,6 @@ class SolidMesher:
         vols = []
         global_mat = None
 
-        # Loop over TARGET elements instead of RAW elements
         for el in target_elements:
             sec = raw_sections.get(el['sec_name'])
             if not sec: continue
@@ -196,7 +193,6 @@ class SolidMesher:
         
         gmsh.model.mesh.generate(3)
 
-        # Extract only using the target elements so rigid links don't try to attach to the whole building
         self._extract_and_populate(global_mat, target_elements, raw_sections)
         gmsh.finalize()
 
@@ -378,8 +374,6 @@ class SolidMesher:
         vy_frame = R[1]
         vz_frame = R[2]
 
-        # Direct Mapping: Gmsh draws width on Y and height on Z.
-        # This matches Frame Local 2 (Width) and Local 3 (Height) exactly.
         x_g = vx_frame
         y_g = vy_frame 
         z_g = vz_frame 

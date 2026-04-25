@@ -104,9 +104,15 @@ class ViewOptionsDialog(QDialog):
         self.pattern_checkboxes = {}
         
         if self.main_window and self.main_window.model:
+            saved_patterns = self.settings.get('visible_patterns', None)
             for pattern_name in self.main_window.model.load_patterns.keys():
                 cb = QCheckBox(pattern_name)
-                cb.setChecked(True)                          
+                                                                                                
+                if saved_patterns is None:
+                    cb.setChecked(True)
+                else:
+                    cb.setChecked(pattern_name in saved_patterns)
+                
                 self.pattern_checkboxes[pattern_name] = cb
                 self.pattern_layout.addWidget(cb)
         
@@ -161,6 +167,9 @@ class ViewOptionsDialog(QDialog):
             name for name, cb in self.pattern_checkboxes.items() 
             if cb.isChecked()
         ]
+        
+        if not visible_patterns:
+            visible_patterns = ['__NONE__']
         
         return {
             'extrude': self.cb_extrude.isChecked(),

@@ -360,13 +360,15 @@ class StructuralModel:
             
             data["sections"].append(sec_data)
 
-        for n in self.nodes.values():
+        for n_id in sorted(self.nodes.keys()):
+            n = self.nodes[n_id]
             data["nodes"].append({
                 "id": n.id, "x": n.x, "y": n.y, "z": n.z,
                 "restraints": n.restraints, "diaphragm": n.diaphragm_name  
             })
 
-        for el in self.elements.values():
+        for el_id in sorted(self.elements.keys()):
+            el = self.elements[el_id]
             data["elements"].append({
                 "id": el.id,
                 "n1_id": el.node_i.id,
@@ -527,7 +529,7 @@ class StructuralModel:
         if "constraints" in data:
             for c_data in data["constraints"]: self.add_constraint(c_data["name"], c_data["axis"])
 
-        self.slabs.clear(); self.constraints.clear()
+        self.slabs.clear(); 
         self.graphics_settings = data.get("graphics", {})
         self.name = data["info"]["name"]
 
@@ -834,6 +836,31 @@ class StructuralModel:
 
         print(f"Merged {len(nodes_to_delete)} duplicate nodes.")
         return len(nodes_to_delete)
+
+    def rebuild_mesh_links(self):
+        """
+        Safety net to fix 'detached pointers' AND 'dictionary order scrambling' 
+        after undo/redo operations.
+        """
+                                                     
+        self.nodes = {k: self.nodes[k] for k in sorted(self.nodes.keys())}
+        self.elements = {k: self.elements[k] for k in sorted(self.elements.keys())}
+        self.slabs = {k: self.slabs[k] for k in sorted(self.slabs.keys())}
+        
+        for el in self.elements.values():
+            if el.node_i.id in self.nodes:
+                el.node_i = self.nodes[el.node_i.id]
+            if el.node_j.id in self.nodes:
+                el.node_j = self.nodes[el.node_j.id]
+                
+        for slab in self.slabs.values():
+            relinked_nodes = []
+            for n in slab.nodes:
+                if n.id in self.nodes:
+                    relinked_nodes.append(self.nodes[n.id])
+                else:
+                    relinked_nodes.append(n)
+            slab.nodes = relinked_nodes
 
     def get_or_create_node(self, x, y, z, tol=0.005):
         """

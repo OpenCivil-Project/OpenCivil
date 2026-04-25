@@ -1,5 +1,6 @@
 import sys
 import os
+import math
 import ctypes
 import time
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
@@ -71,7 +72,6 @@ class OPENCIVILSplash(QSplashScreen):
     def __init__(self, pixmap):
         super().__init__(pixmap)
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
         
         w = pixmap.width()
         h = pixmap.height()
@@ -120,7 +120,6 @@ class VideoSplash(QWidget):
     def __init__(self, video_path):
         super().__init__()
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
         
         self.resize(800, 450) 
                           
@@ -743,13 +742,13 @@ class MainWindow(QMainWindow):
 
     def _toolbar_zoom_in(self):
         """Zoom in button — simulates a scroll-up at canvas centre."""
-        w, h = self.canvas.width(), self.canvas.height()
-        self.canvas.camera.zoom(120, w / 2, h / 2, w, h)
+        w, h = self.active_canvas.width(), self.active_canvas.height()
+        self.active_canvas.camera.zoom(120, w / 2, h / 2, w, h)
 
     def _toolbar_zoom_out(self):
         """Zoom out button — simulates a scroll-down at canvas centre."""
-        w, h = self.canvas.width(), self.canvas.height()
-        self.canvas.camera.zoom(-120, w / 2, h / 2, w, h)
+        w, h = self.active_canvas.width(), self.active_canvas.height()
+        self.active_canvas.camera.zoom(-120, w / 2, h / 2, w, h)
 
     def _toolbar_toggle_animation(self):
         """▶ Animate button — opens the deformed shape dialog if needed,
@@ -844,8 +843,8 @@ class MainWindow(QMainWindow):
 
     def set_view_3d(self):
         self.current_view_mode = "3D"
-        self.canvas.active_view_plane = None 
-        self.canvas.set_standard_view("3D")  
+        self.active_canvas.active_view_plane = None 
+        self.active_canvas.set_standard_view("3D")  
         if self.model: self.draw_both_canvases()
         self.status.showMessage("View: Full 3D")
         if self.cross_brace_dialog:
@@ -875,16 +874,16 @@ class MainWindow(QMainWindow):
 
         self.current_grid_index = max(0, min(self.current_grid_index, len(grid_list) - 1))
         val = grid_list[self.current_grid_index]
-        self.canvas.active_view_plane = {'axis': axis, 'value': val}
+        self.active_canvas.active_view_plane = {'axis': axis, 'value': val}
         if self.model: self.draw_both_canvases()
         self.status.showMessage(f"Filtered View: {self.current_view_mode} @ {axis.upper()}={val:.2f}m")
         if self.cross_brace_dialog:
-            self.cross_brace_dialog.update_plane_status(self.canvas.active_view_plane)
+            self.cross_brace_dialog.update_plane_status(self.active_canvas.active_view_plane)
 
     def set_view_iso(self):
         self.current_view_mode = "3D"
-        self.canvas.active_view_plane = None
-        self.canvas.set_standard_view("ISO") 
+        self.active_canvas.active_view_plane = None
+        self.active_canvas.set_standard_view("ISO") 
         if self.model: self.draw_both_canvases()
         self.status.showMessage("View: Orthogonal Isometric")
         if self.cross_brace_dialog:
@@ -1194,57 +1193,35 @@ class MainWindow(QMainWindow):
     def _place_beam_column_at(self):
         import numpy as np
         seg = self.canvas._beam_col_hover_seg
-        if seg is None:
-            self.status.showMessage("No grid segment detected — hover over a grid line.")
-            return
+        if seg is None: return
 
         section = self.beam_col_dialog.get_selected_section()
-        if not section:
-            self.status.showMessage("Error: No section selected.")
-            return
+        if not section: return
 
         p1, p2 = seg
         rel_i, rel_j  = self.beam_col_dialog.get_release_arrays()
         member_type   = self.beam_col_dialog.get_member_type()
         rotation      = self.beam_col_dialog.get_rotation_angle()
         
-        label = "Draw Quick Beam" if member_type == 'beam' else "Draw Quick Column"
-
         if self._frame_exists_between(tuple(p1), tuple(p2)):
-            kind = "Beam" if member_type == 'beam' else "Column"
-            self.status.showMessage(f"⚠️ Cannot place {kind}: an element already exists on this segment.")
+            self.status.showMessage("⚠️ Cannot place element: an element already exists here.")
             return
 
-        self.undo_stack.beginMacro(label)
-
-        cmd = CmdDrawFrame(self.model, self, tuple(p1), tuple(p2), section, rel_i, rel_j)
-        self.undo_stack.push(cmd)
-        
-        new_elem_id = max(self.model.elements.keys())
-
-        if rotation != 0.0:
-            from app.commands import CmdAssignLocalAxes                       
-            cmd_rot = CmdAssignLocalAxes(self.model, self, [new_elem_id], rotation)
-            self.undo_stack.push(cmd_rot)
-
+        card_point = 10
+        no_trans = False
         if member_type == 'beam' and self.beam_col_dialog.get_apply_offset():
-            no_transform = self.beam_col_dialog.get_no_transform()
-            cmd_ins = CmdAssignInsertion(
-                self.model, self,
-                [new_elem_id],
-                8,                                                     
-                np.zeros(3),                              
-                np.zeros(3),                              
-                "Local",
-                no_transform
-            )
-            self.undo_stack.push(cmd_ins)
+            card_point = 8             
+            no_trans = self.beam_col_dialog.get_no_transform()
 
-        self.undo_stack.endMacro()
+        label = "Draw Quick Beam" if member_type == 'beam' else "Draw Quick Column"
         
-        kind = "Beam" if member_type == 'beam' else "Column"
-        self.status.showMessage(f"{kind} placed. Click another segment or Esc to exit.")
+        cmd = CmdDrawFrame(self.model, self, tuple(p1), tuple(p2), section, 
+                           rel_i, rel_j, rotation, card_point, no_trans, description=label)
         
+        self.add_command(cmd)
+        
+        self.status.showMessage(f"{label} placed. Click another segment or Esc to exit.")
+
     def _get_brace_cell_corners(self, x, y, z):
         """
         Given a snapped grid corner and the active view plane, returns the
@@ -1426,13 +1403,13 @@ class MainWindow(QMainWindow):
                     self.beam_col_dialog.hide()
                 self.on_beam_col_finished()
             if hasattr(self, 'act_select'):
-                self.act_select.setChecked(True)  # ✅ from 2nd def
+                self.act_select.setChecked(True)                  
 
         elif event.key() == Qt.Key.Key_Delete:
             if getattr(self, 'is_locked', False):
                 self.status.showMessage("⚠️ Cannot delete objects while Analysis Results are active. Unlock model first.")
                 return
-            self.delete_current_selection()  # ✅ restored
+            self.delete_current_selection()              
 
         super().keyPressEvent(event)
         
@@ -1536,8 +1513,7 @@ class MainWindow(QMainWindow):
             
             self.canvas.draw_model(self.model)
             if getattr(self, 'canvas2_visible', False):
-                self.canvas2.draw_model(self.model)
-            self.status.showMessage("Grid System Updated.")
+                self.canvas2.draw_model(self.model, list(self.selected_ids), list(self.selected_node_ids))
 
     def _handle_box_selection_canvas2(self, node_ids, elem_ids, is_additive, is_deselect):
         """Route canvas2 box-selection only when canvas2 is the active canvas."""
@@ -1568,28 +1544,53 @@ class MainWindow(QMainWindow):
                     self.selected_node_ids = []
                     self.status.showMessage("Selection Cleared")
         
-        self.active_canvas.update_selection_overlay(self.selected_ids, self.selected_node_ids)
+        for cvs in [self.canvas, self.canvas2]:
+            cvs.update_selection_overlay(self.selected_ids, self.selected_node_ids)
 
         modifiers = QApplication.keyboardModifiers()
         is_focus_requested = (modifiers == Qt.KeyboardModifier.AltModifier)
 
-        if is_focus_requested:
-            if len(node_ids) == 1 and not elem_ids:
-                nid = node_ids[0]
+        if is_focus_requested and (node_ids or elem_ids):
+                                                    
+            sel_pts = []
+            for nid in node_ids:
                 n = self.model.nodes[nid]
-                target = QVector3D(n.x, n.y, n.z)
-                self.canvas.camera.animate_to(target_center=target)
-                self.status.showMessage(f"Selected Node {nid} (Camera Focused)")
-                
-            elif len(elem_ids) == 1 and not node_ids:
-                eid = elem_ids[0]
+                sel_pts.append((n.x, n.y, n.z))
+            for eid in elem_ids:
                 el = self.model.elements[eid]
-                mid_x = (el.node_i.x + el.node_j.x) / 2
-                mid_y = (el.node_i.y + el.node_j.y) / 2
-                mid_z = (el.node_i.z + el.node_j.z) / 2
-                target = QVector3D(mid_x, mid_y, mid_z)
-                self.canvas.camera.animate_to(target_center=target)
-                self.status.showMessage(f"Selected Frame {eid} (Camera Focused)")
+                sel_pts.append((el.node_i.x, el.node_i.y, el.node_i.z))
+                sel_pts.append((el.node_j.x, el.node_j.y, el.node_j.z))
+
+            if sel_pts:
+                xs = [p[0] for p in sel_pts]
+                ys = [p[1] for p in sel_pts]
+                zs = [p[2] for p in sel_pts]
+                cx = (min(xs) + max(xs)) / 2.0
+                cy = (min(ys) + max(ys)) / 2.0
+                cz = (min(zs) + max(zs)) / 2.0
+                sel_diag = math.sqrt(
+                    (max(xs)-min(xs))**2 +
+                    (max(ys)-min(ys))**2 +
+                    (max(zs)-min(zs))**2
+                )
+                                                                       
+                if sel_diag < 0.001:
+                    _, model_diag, _ = self.canvas.compute_model_bbox()
+                    sel_diag = model_diag * 0.20
+
+                target        = QVector3D(cx, cy, cz)
+                target_dist   = max(sel_diag * 2.5, 0.05)
+                self.canvas.camera.animate_to(
+                    target_center=target, target_dist=target_dist
+                )
+                if len(node_ids) == 1 and not elem_ids:
+                    self.status.showMessage(f"Focused on Node {node_ids[0]}")
+                elif len(elem_ids) == 1 and not node_ids:
+                    self.status.showMessage(f"Focused on Frame {elem_ids[0]}")
+                else:
+                    self.status.showMessage(
+                        f"Focused on {len(elem_ids)} Frames, {len(node_ids)} Joints"
+                    )
 
     def delete_current_selection(self):
         if not self.model: return
@@ -2173,7 +2174,7 @@ class MainWindow(QMainWindow):
         self.is_locked = True
         self.set_interface_state(False)
                                                               
-        self.btn_lock.setIcon(qta.icon('fa5s.lock', color="#c76963")) 
+        self.btn_lock.setIcon(qta.icon('fa5s.lock', color="#c77873")) 
         self.btn_lock.setToolTip("Analysis Results Active. Click to Unlock and Edit.")
 
     def unlock_model(self):
@@ -2198,26 +2199,28 @@ class MainWindow(QMainWindow):
         self.model.has_results = False
         self.model.results = None
 
-        if hasattr(self, "canvas") and self.canvas.animation_manager:
-            self.canvas.animation_manager.stop_animation()
-
-        if hasattr(self.canvas, 'clear_ltha_history'):
-            self.canvas.clear_ltha_history()
-
         self.canvas.view_deflected = False
         self.canvas.anim_factor = 0.0
         self.canvas.invalidate_animation_cache()
+        if hasattr(self.canvas, 'animation_manager') and self.canvas.animation_manager:
+            self.canvas.animation_manager.stop_animation()
+        if hasattr(self.canvas, 'clear_ltha_history'):
+            self.canvas.clear_ltha_history()
+
+        self.canvas2.view_deflected = False
+        self.canvas2.anim_factor = 0.0
+        self.canvas2.invalidate_animation_cache()
+        if hasattr(self.canvas2, 'animation_manager') and self.canvas2.animation_manager:
+            self.canvas2.animation_manager.stop_animation()
+        if hasattr(self.canvas2, 'clear_ltha_history'):
+            self.canvas2.clear_ltha_history()
 
         if hasattr(self, "deformed_shape_dialog") and self.deformed_shape_dialog:
             self.deformed_shape_dialog.force_exit_animation_mode()
 
         self.canvas._force_draw_model(self.model)
-
-        self.canvas.view_deflected = False
-        self.canvas.anim_factor = 0.0
-        self.canvas.invalidate_animation_cache()
-
-        self.canvas._force_draw_model(self.model)
+        if getattr(self, 'canvas2_visible', False):
+            self.canvas2._force_draw_model(self.model)
 
         self.set_interface_state(True)
         
@@ -2328,6 +2331,7 @@ class MainWindow(QMainWindow):
         self._deformed_dlg = DeformedShapeDialog(
             parent=self,
             current_scale=self.canvas.deflection_scale,
+            auto_scale=getattr(self.canvas, 'auto_deflection_scale', 1.0),
             is_active=self.canvas.view_deflected,
             show_shadow=self.canvas.view_shadow,
             shadow_color=self.canvas.shadow_color,
@@ -2343,18 +2347,18 @@ class MainWindow(QMainWindow):
 
     def apply_deformed_shape(self, is_visible, scale_factor, show_shadow, shadow_color):
         """Callback from the Dialog to update the canvas."""
-                                                
-        self.canvas.view_deflected = is_visible
         
-        if self.canvas.deflection_scale != scale_factor:
-            self.canvas.deflection_scale = scale_factor
-                                                                           
-            if hasattr(self.canvas, 'animation_manager'):
-                self.canvas.animation_manager.invalidate_prerender()
-        
-        self.canvas.view_shadow = show_shadow
-        self.canvas.shadow_color = shadow_color
-        
+        for cvs in [self.canvas, self.canvas2]:
+            cvs.view_deflected = is_visible
+            
+            if cvs.deflection_scale != scale_factor:
+                cvs.deflection_scale = scale_factor
+                if hasattr(cvs, 'animation_manager'):
+                    cvs.animation_manager.invalidate_prerender()
+            
+            cvs.view_shadow = show_shadow
+            cvs.shadow_color = shadow_color
+            
         self.draw_both_canvases()
         
         state_msg = "ON" if is_visible else "OFF"
@@ -2556,14 +2560,22 @@ class MainWindow(QMainWindow):
                     target_visual_size = diag_length * 0.05
                     auto_scale = target_visual_size / max_disp
             else:
-                auto_scale = 1.0
+                auto_scale = 2.0
 
+            self.canvas.auto_deflection_scale = auto_scale
             self.canvas.deflection_scale = auto_scale
+            self.canvas2.auto_deflection_scale = auto_scale
+            self.canvas2.deflection_scale = auto_scale
         
         if not self.canvas.view_deflected:
             self.canvas.view_deflected = True
+        self.canvas2.view_deflected = True
+        
+        self.canvas.anim_factor = 2.0
+        self.canvas2.anim_factor = 2.0
             
         self.canvas.invalidate_deflection_cache()
+        self.canvas2.invalidate_deflection_cache()
         
         if hasattr(self.canvas, 'animation_manager'):
             self.canvas.animation_manager.invalidate_prerender()
@@ -2648,17 +2660,19 @@ class MainWindow(QMainWindow):
     def _on_model_changed(self, idx):
         """Called on every undo stack push/undo/redo — keeps canvas2 in sync."""
         if self.model and getattr(self, 'canvas2_visible', False):
-            self.canvas2.draw_model(self.model)
+            self.canvas2.draw_model(self.model,
+                                    list(self.selected_ids),
+                                    list(self.selected_node_ids))
 
     def draw_both_canvases(self, sel_elems=None, sel_nodes=None):
-        """Draw the model on both canvases. Selection state only on the active canvas."""
+        """Draw the model on both canvases with consistent selection state."""
         if not self.model:
             return
         e = sel_elems if sel_elems is not None else self.selected_ids
         n = sel_nodes if sel_nodes is not None else self.selected_node_ids
         self.canvas.draw_model(self.model, e, n)
         if getattr(self, 'canvas2_visible', False):
-            self.canvas2.draw_model(self.model)
+            self.canvas2.draw_model(self.model, e, n)
 
     def refresh_canvas(self):
         self.draw_both_canvases()
@@ -2713,7 +2727,9 @@ class MainWindow(QMainWindow):
         if not self.model or not self.model.has_results:
             return
         
-        self.canvas.view_deflected = checked
+        for cvs in [self.canvas, self.canvas2]:
+            cvs.view_deflected = checked
+            
         self.draw_both_canvases()
         
         state_msg = "ON" if checked else "OFF"
@@ -2722,9 +2738,9 @@ class MainWindow(QMainWindow):
     def _toggle_pan(self, checked):
         if checked:
                                            
-            self.canvas.setCursor(Qt.CursorShape.OpenHandCursor)
+            self.active_canvas.setCursor(Qt.CursorShape.OpenHandCursor)
             
-            self.canvas.single_use_pan_active = True 
+            self.active_canvas.single_use_pan_active = True 
             self.status.showMessage("Pan Tool Active: Left-click and drag to move camera.")
             
             if getattr(self, 'draw_mode_active', False):
@@ -2733,8 +2749,8 @@ class MainWindow(QMainWindow):
                     self.draw_dialog.hide()
         else:
                                            
-            self.canvas.setCursor(Qt.CursorShape.ArrowCursor)
-            self.canvas.single_use_pan_active = False
+            self.active_canvas.setCursor(Qt.CursorShape.ArrowCursor)
+            self.active_canvas.single_use_pan_active = False
             self.status.showMessage("Ready")
 
     def _apply_canvas_view_settings(self, gs):
@@ -2781,7 +2797,9 @@ class MainWindow(QMainWindow):
         self.canvas_frame2.setVisible(checked)
         if checked:
             if self.model:
-                self.canvas2.draw_model(self.model)
+                self.canvas2.draw_model(self.model,
+                                        list(self.selected_ids),
+                                        list(self.selected_node_ids))
                                                                         
             QTimer.singleShot(50, lambda: self.canvas2.set_standard_view("ISO"))
         else:

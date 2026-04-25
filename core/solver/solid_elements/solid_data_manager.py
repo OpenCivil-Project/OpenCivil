@@ -363,7 +363,6 @@ class SolidDataManager:
         
         print("SolidDataManager: Prepping Submodel Boundaries...")
         
-        # 1. Load the linear static results
         try:
             with open(linear_results_path, 'r') as f:
                 results = json.load(f)
@@ -372,7 +371,6 @@ class SolidDataManager:
             
         displacements = results.get("displacements", {})
         
-        # 2. Identify the Cut Nodes
         selected_nodes = set()
         unselected_nodes = set()
         
@@ -384,28 +382,24 @@ class SolidDataManager:
                 unselected_nodes.add(el['n1_id'])
                 unselected_nodes.add(el['n2_id'])
                 
-        # The cut boundary is strictly where selected elements meet unselected elements
         cut_nodes = selected_nodes.intersection(unselected_nodes)
         
-        # Also include any nodes within the selection that are actual global supports
         for n in self.raw.get('nodes', []):
             if n['id'] in selected_nodes and any(n.get('restraints', [False]*6)):
                 cut_nodes.add(n['id'])
 
         print(f"  -> Identified Cut Nodes: {list(cut_nodes)}")
 
-        # 3. Store prescribed displacements & trick the mesher
-        self.prescribed_displacements = {}  # Format: { node_idx: [Ux, Uy, Uz, Rx, Ry, Rz] }
+        self.prescribed_displacements = {}                                                  
         
         count = 0
         for n in self.nodes:
             if n['id'] in cut_nodes:
                 nid_str = str(n['id'])
                 if nid_str in displacements:
-                    # Save the 6-DOF displacement to apply in the SolidAssembler later
+                                                                                      
                     self.prescribed_displacements[n['idx']] = displacements[nid_str]
                     
-                    # THE TRICK: Flag as fully restrained so SolidMesher builds Rigid Links here!
                     n['restraints'] = [True, True, True, True, True, True]
                     count += 1
                 else:
@@ -440,7 +434,6 @@ class SolidDataManager:
 
         print("SolidDataManager: Prepping Force-Based Submodel Boundaries...")
 
-        # ── 1. Load frame results and element matrices ────────────────────────
         try:
             with open(linear_results_path, 'r') as f:
                 results = json.load(f)
@@ -451,7 +444,6 @@ class SolidDataManager:
 
         displacements = results.get("displacements", {})
 
-        # ── 2. Classify nodes ─────────────────────────────────────────────────
         selected_nodes   = set()
         unselected_nodes = set()
 
@@ -464,35 +456,30 @@ class SolidDataManager:
                 unselected_nodes.add(ni)
                 unselected_nodes.add(nj)
 
-        # Nodes shared between inside and outside frame elements
         boundary_cut_nodes = selected_nodes & unselected_nodes
 
-        # Real physical supports inside the selection — these kill rigid body motion
         support_nodes_in_selection = set()
         for n in self.raw.get('nodes', []):
             if n['id'] in selected_nodes and any(n.get('restraints', [False] * 6)):
                 support_nodes_in_selection.add(n['id'])
 
-        # All nodes that need a rigid link in the solid mesh
         all_rigid_link_nodes = boundary_cut_nodes | support_nodes_in_selection
 
         print(f"  -> Boundary cut nodes  (force BCs) : {sorted(boundary_cut_nodes)}")
         print(f"  -> Support nodes in selection (disp=0): {sorted(support_nodes_in_selection)}")
 
-        # ── 3. Compute cut forces for every crossing element ──────────────────
-        # A crossing element is OUTSIDE the selection AND touches a cut node.
-        self.cut_node_forces = {}   # node_id → np.array(6,) in global coords
+        self.cut_node_forces = {}                                            
 
         for el in self.raw.get('elements', []):
             if el['id'] in selected_element_ids:
-                continue  # purely inside — not a crossing element
+                continue                                          
 
             ni_id, nj_id = el['n1_id'], el['n2_id']
             ni_is_cut = ni_id in boundary_cut_nodes
             nj_is_cut = nj_id in boundary_cut_nodes
 
             if not ni_is_cut and not nj_is_cut:
-                continue  # not touching the cut boundary
+                continue                                 
 
             str_id = str(el['id'])
             if str_id not in matrices:
@@ -500,37 +487,35 @@ class SolidDataManager:
                 continue
 
             mat_data = matrices[str_id]
-            k   = np.array(mat_data['k'])    # 12×12 local stiffness
-            t   = np.array(mat_data['t'])    # 12×12 T_total = T_ecc @ T_rot
-            fef = np.array(mat_data['fef'])  # 12   fixed-end forces (local)
+            k   = np.array(mat_data['k'])                           
+            t   = np.array(mat_data['t'])                                   
+            fef = np.array(mat_data['fef'])                                 
 
             u_i = np.array(displacements.get(str(ni_id), [0.0] * 6))
             u_j = np.array(displacements.get(str(nj_id), [0.0] * 6))
             u_global_12 = np.concatenate([u_i, u_j])
 
-            # Same formula as element_forces.py → end forces in LOCAL coords
             end_forces_local = k @ (t @ u_global_12) + fef
 
-            # t[0:3, 0:3] == R_3x3  because T_ecc[0:3,0:3] == eye(3)
             R_3x3 = t[0:3, 0:3]
 
             def _to_global(F_loc6):
                 """Rotate a 6-DOF local force vector to global coords."""
                 out = np.zeros(6)
-                out[0:3] = R_3x3.T @ F_loc6[0:3]   # forces
-                out[3:6] = R_3x3.T @ F_loc6[3:6]   # moments
+                out[0:3] = R_3x3.T @ F_loc6[0:3]           
+                out[3:6] = R_3x3.T @ F_loc6[3:6]            
                 return out
 
             if ni_is_cut:
                 F_g = _to_global(end_forces_local[0:6])
-                # FIX: Apply the opposite force to the boundary node
+                                                                    
                 self.cut_node_forces[ni_id] = (
                     self.cut_node_forces.get(ni_id, np.zeros(6)) - F_g
                 )
 
             if nj_is_cut:
                 F_g = _to_global(end_forces_local[6:12])
-                # FIX: Apply the opposite force to the boundary node
+                                                                    
                 self.cut_node_forces[nj_id] = (
                     self.cut_node_forces.get(nj_id, np.zeros(6)) - F_g
                 )
@@ -541,9 +526,6 @@ class SolidDataManager:
                   f"Fx={F[0]:.3f}  Fy={F[1]:.3f}  Fz={F[2]:.3f} | "
                   f"Mx={F[3]:.3f}  My={F[4]:.3f}  Mz={F[5]:.3f}")
 
-        # ── 4. Flag nodes so SolidMesher creates rigid links at them ──────────
-        # The assembler will later differentiate: cut_nodes → force BC,
-        # support_nodes_in_selection → disp=0 BC.
         self.cut_nodes                  = boundary_cut_nodes
         self.support_nodes_in_selection = support_nodes_in_selection
 

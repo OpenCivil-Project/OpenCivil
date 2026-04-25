@@ -19,6 +19,9 @@ class GlobalAssembler:
         """Master function to build K and P."""
         print("Assembler: Building Stiffness Matrix...")
         self._build_stiffness()
+
+        print("Assembler: Applying Diaphragm Constraints...")            
+        self._apply_diaphragm_constraints() 
         
         print("Assembler: Processing Nodal Loads...")
                             
@@ -124,6 +127,75 @@ class GlobalAssembler:
                 k_final[i, i] += penalty
 
         return k_final
+
+    def _apply_diaphragm_constraints(self):
+        """
+        Enforces rigid floor diaphragm constraints using the penalty method.
+        Constrains in-plane DOFs only: UX, UY, RZ.
+        UZ, RX, RY remain independent (out-of-plane bending is free).
+        
+        Constraint equations (Z-axis diaphragm, master node m, slave node s):
+            UX_s = UX_m - dY * RZ_m   (dY = Ys - Ym)
+            UY_s = UY_m + dX * RZ_m   (dX = Xs - Xm)
+            RZ_s = RZ_m
+        """
+        if not hasattr(self.dm, 'diaphragm_groups'):
+            return
+
+        diag = self.K.diagonal()
+        k_max = np.max(np.abs(diag)) if diag.size > 0 else 1.0
+        if k_max < 1e-10:
+            k_max = 1.0
+        alpha = k_max * 1e6
+
+        node_by_id = {n['id']: n for n in self.dm.nodes}
+
+        for dia_name, node_ids in self.dm.diaphragm_groups.items():
+            if len(node_ids) < 2:
+                continue
+
+            master_id = min(node_ids)
+            master = node_by_id[master_id]
+            mi = master['idx'] * 6
+            Xm, Ym = master['coords'][0], master['coords'][1]
+
+            for slave_id in node_ids:
+                if slave_id == master_id:
+                    continue
+                slave = node_by_id[slave_id]
+                si = slave['idx'] * 6
+                dX = slave['coords'][0] - Xm
+                dY = slave['coords'][1] - Ym
+
+                ux_s, uy_s, rz_s = si+0, si+1, si+5
+                ux_m, uy_m, rz_m = mi+0, mi+1, mi+5
+
+                self.K[ux_s, ux_s] += alpha
+                self.K[ux_s, ux_m] -= alpha
+                self.K[ux_s, rz_m] += alpha * dY
+                self.K[ux_m, ux_s] -= alpha
+                self.K[ux_m, ux_m] += alpha
+                self.K[ux_m, rz_m] -= alpha * dY
+                self.K[rz_m, ux_s] += alpha * dY
+                self.K[rz_m, ux_m] -= alpha * dY
+                self.K[rz_m, rz_m] += alpha * dY**2
+
+                self.K[uy_s, uy_s] += alpha
+                self.K[uy_s, uy_m] -= alpha
+                self.K[uy_s, rz_m] -= alpha * dX
+                self.K[uy_m, uy_s] -= alpha
+                self.K[uy_m, uy_m] += alpha
+                self.K[uy_m, rz_m] += alpha * dX
+                self.K[rz_m, uy_s] -= alpha * dX
+                self.K[rz_m, uy_m] += alpha * dX
+                self.K[rz_m, rz_m] += alpha * dX**2
+
+                self.K[rz_s, rz_s] += alpha
+                self.K[rz_s, rz_m] -= alpha
+                self.K[rz_m, rz_s] -= alpha
+                self.K[rz_m, rz_m] += alpha
+
+            print(f"      Diaphragm '{dia_name}': {len(node_ids)} nodes, master=Node {master_id}, α={alpha:.2e}")
 
     def _get_exact_fef_via_stiffness(self, L, a, P_vec_local, mat, sec, M_vec_local=None):
         """

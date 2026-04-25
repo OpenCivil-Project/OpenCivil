@@ -47,3 +47,55 @@ def add_general_section(name, mat_name, A, J, I33, I22, Asy, Asz):
     sec = GeneralSection(name, mat, props_dict)
     model.add_section(sec)
     print(f" -> API: Added General Section '{name}'")
+
+def add_mass_source(name="Default", include_self_mass=True, patterns=None):
+    """
+    Defines a Mass Source and sets it as active for modal analysis.
+    Mirrors the GUI 'Mass Source Data' dialog.
+
+    Parameters
+    ----------
+    name              : str   — mass source name (default "Default")
+    include_self_mass : bool  — include element self mass (default True)
+    patterns          : dict  — {pattern_name: multiplier} for load-pattern-based mass
+                                e.g. {"DEAD": 1.0, "LIVE": 0.25}
+                                ⚠ WARNING: if a pattern has sw_mult > 0 AND
+                                include_self_mass=True, self-weight is double counted!
+
+    Examples
+    --------
+    # Self mass only (most common for steel structures)
+    oc.add_mass_source("MSS1", include_self_mass=True)
+
+    # Load pattern only (common for concrete with superimposed loads)
+    oc.add_mass_source("MSS1", include_self_mass=False,
+                       patterns={"DEAD": 1.0, "LIVE": 0.25})
+
+    # Both (be careful of double counting if DEAD has sw_mult > 0)
+    oc.add_mass_source("MSS1", include_self_mass=True,
+                       patterns={"LIVE": 0.25})
+    """
+    from core.model import MassSource
+    model = get_active_model()
+
+    ms = MassSource(name)
+    ms.include_self_mass = include_self_mass
+    ms.load_patterns = []
+
+    if patterns:
+        ms.include_patterns = True
+        for pat_name, mult in patterns.items():
+            if pat_name not in model.load_patterns:
+                raise ValueError(f"Load pattern '{pat_name}' not found. Define it first with oc.pattern().")
+            ms.load_patterns.append((pat_name, float(mult)))
+    else:
+        ms.include_patterns = False
+
+    if not hasattr(model, 'mass_sources'):
+        model.mass_sources = {}
+
+    model.mass_sources[name] = ms
+    model.active_mass_source = name
+
+    pat_info = f", patterns={patterns}" if patterns else ""
+    print(f" -> API: Mass Source '{name}' | self_mass={include_self_mass}{pat_info}")

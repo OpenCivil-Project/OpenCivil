@@ -181,7 +181,8 @@ class AssignInsertionPointDialog(QDialog):
                 card_id, 
                 raw_i, 
                 raw_j, 
-                coord_sys
+                coord_sys,
+                self.chk_no_transform.isChecked()
             )
             self.main_window.add_command(cmd)
             

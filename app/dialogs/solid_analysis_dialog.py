@@ -7,14 +7,12 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QCursor
 
-# --- PATH ROUTING ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 solid_solver_dir = os.path.abspath(os.path.join(current_dir, '..', '..', 'core', 'solver', 'solid_elements'))
 if solid_solver_dir not in sys.path:
     sys.path.append(solid_solver_dir)
 
 from solid_main_engine import run_mesh_only, run_solid_analysis, run_submodel_analysis
-
 
 class StreamRedirector(io.StringIO):
     def __init__(self, text_widget, original_stdout):
@@ -23,18 +21,10 @@ class StreamRedirector(io.StringIO):
         self.original_stdout = original_stdout
 
     def write(self, text):
-        # 1. Always write to the real terminal first.
+                                                     
         self.original_stdout.write(text)
         self.original_stdout.flush()
 
-        # 2. Post to the GUI thread safely from ANY thread.
-        #
-        #    *** BUG FIX ***
-        #    The old code used QTimer.singleShot() here, which SILENTLY FAILS
-        #    when called from a QThread because worker threads have no event
-        #    loop of their own.  QMetaObject.invokeMethod with QueuedConnection
-        #    is the correct cross-thread GUI update path — it posts directly to
-        #    the main thread's event queue regardless of the calling thread.
         if text.strip():
             from PyQt6.QtCore import QMetaObject, Q_ARG
             QMetaObject.invokeMethod(
@@ -46,7 +36,6 @@ class StreamRedirector(io.StringIO):
 
     def flush(self):
         self.original_stdout.flush()
-
 
 class SolidAnalysisWorker(QThread):
     finished = pyqtSignal(bool, object, list, object)
@@ -77,7 +66,6 @@ class SolidAnalysisWorker(QThread):
         except Exception as e:
             print(f"Worker Error: {e}")
             self.finished.emit(False, None, [], None)
-
 
 class SolidAnalysisDialog(QDialog):
     def __init__(self, main_window):
@@ -115,7 +103,6 @@ class SolidAnalysisDialog(QDialog):
         main_layout.setSpacing(15)
         main_layout.setContentsMargins(15, 15, 15, 15)
 
-        # --- Group 1: Configuration ---
         config_group = QGroupBox("Engine Configuration")
         config_layout = QHBoxLayout()
         config_layout.setSpacing(20)
@@ -141,7 +128,6 @@ class SolidAnalysisDialog(QDialog):
         config_group.setLayout(config_layout)
         main_layout.addWidget(config_group, stretch=0)
 
-        # --- Group 2: Action Dashboard ---
         action_group = QGroupBox("Execution Dashboard")
         action_layout = QHBoxLayout()
         action_layout.setSpacing(10)
@@ -182,7 +168,6 @@ class SolidAnalysisDialog(QDialog):
         action_group.setLayout(action_layout)
         main_layout.addWidget(action_group, stretch=0)
 
-        # --- Console Output ---
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.setFont(QFont("Consolas", 10))
@@ -198,7 +183,6 @@ class SolidAnalysisDialog(QDialog):
         """)
         main_layout.addWidget(self.log_output, stretch=1)
 
-        # --- Bottom Close Button ---
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         self.btn_close = QPushButton("Close Viewer")
@@ -235,8 +219,6 @@ class SolidAnalysisDialog(QDialog):
         self.btn_close.setEnabled(enabled)
         self.cmb_cases.setEnabled(enabled)
         self.txt_mesh_size.setEnabled(enabled)
-
-    # --- BUTTON SLOTS ---
 
     def _on_preview_clicked(self):
         case, ms = self._get_params()
@@ -297,18 +279,6 @@ class SolidAnalysisDialog(QDialog):
 
         print("\nAnalysis complete. Preparing OpenCivil Solid Viewer...")
 
-        # *** BUG FIX: OpenGL context crash ***
-        #
-        # Root cause: pyqtgraph's GLViewWidget acquires the GL context during
-        # its first paintGL().  If a parent widget (this dialog) still holds an
-        # active GL context at that moment, Qt cannot share it and returns None,
-        # causing "AttributeError: 'NoneType' object has no attribute
-        # 'hasExtension'" inside GLMeshItem.paint().
-        #
-        # Fix: hide the dialog BEFORE the viewer window is created and shown.
-        # The dialog's own GL resources are released when it becomes invisible,
-        # leaving the context free for the viewer to claim exclusively.
-        # We restore the dialog after the viewer closes via a finished signal.
         self.hide()
 
         from PyQt6.QtCore import QTimer
@@ -326,13 +296,11 @@ class SolidAnalysisDialog(QDialog):
                 from PyQt6.QtGui import QIcon
                 self.viewer.setWindowIcon(QIcon(icon_path))
 
-            # Re-show the dialog when the viewer window is closed so the user
-            # can run further analyses without reopening the dialog.
             self.viewer.destroyed.connect(self.show)
 
             self.viewer.show()
         except Exception as e:
-            # If viewer fails, make sure the dialog comes back
+                                                              
             self.show()
             print(f"Viewer Error: {e}")
 

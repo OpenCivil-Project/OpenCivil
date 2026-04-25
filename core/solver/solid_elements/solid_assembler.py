@@ -67,13 +67,11 @@ class SolidAssembler:
         is_free = np.ones(self.dm.total_dofs, dtype=bool)
         U_full  = np.zeros(self.dm.total_dofs)
 
-        # ── Detect operating mode ─────────────────────────────────────────────
         is_force_based = hasattr(self.dm, 'cut_node_forces')
-        cut_nodes      = getattr(self.dm, 'cut_nodes', set())          # force-BC nodes
+        cut_nodes      = getattr(self.dm, 'cut_nodes', set())                          
         if is_force_based:
             print("  Mode: Force-Based Submodeling")
 
-        # ── 1. Standard solid node restraints (mesh-level pins) ───────────────
         for node in self.dm.nodes:
             start_idx  = node['idx'] * 3
             restraints = node['restraints']
@@ -81,7 +79,6 @@ class SolidAssembler:
                 if restraints[i]:
                     is_free[start_idx + i] = False
 
-        # ── Helper: find raw frame node closest to a set of coords ────────────
         def _find_raw_node(master_coords):
             for raw_n in self.dm.raw['nodes']:
                 if (abs(raw_n['x'] - master_coords[0]) < 1e-5 and
@@ -90,7 +87,6 @@ class SolidAssembler:
                     return raw_n
             return None
 
-        # ── Helper: prescribed displacement lookup (legacy disp-based mode) ───
         old_id_to_idx = {}
         if hasattr(self.dm, 'prescribed_displacements'):
             user_ids = sorted(n['id'] for n in self.dm.raw['nodes'])
@@ -104,7 +100,6 @@ class SolidAssembler:
                 return self.dm.prescribed_displacements[old_idx]
             return [0.0] * 6
 
-        # ── 2. Rigid-link master DOF constraints ──────────────────────────────
         if hasattr(self.dm, 'rigid_links'):
             for rl in self.dm.rigid_links:
                 m_start    = rl['master_dof_start']
@@ -112,19 +107,15 @@ class SolidAssembler:
                 raw_n      = _find_raw_node(rl['master_coords'])
                 node_id    = raw_n['id'] if raw_n else None
 
-                # Force-based cut node → leave master DOFs FREE.
-                # Forces will be injected into P in step 3 below.
                 if is_force_based and node_id in cut_nodes:
                     continue
 
-                # Everything else: displacement BC (either prescribed or zero)
                 prescribed_disp = _get_prescribed(raw_n)
                 for i in range(6):
                     if restraints[i]:
                         is_free[m_start + i] = False
                         U_full[m_start + i]  = prescribed_disp[i]
 
-        # ── 3. Inject cut forces into P (force-based mode only) ───────────────
         if is_force_based and hasattr(self.dm, 'rigid_links'):
             cut_forces = self.dm.cut_node_forces or {}
             for rl in self.dm.rigid_links:
@@ -137,7 +128,6 @@ class SolidAssembler:
                           f"F=[{F[0]:.2f}, {F[1]:.2f}, {F[2]:.2f}] "
                           f"M=[{F[3]:.2f}, {F[4]:.2f}, {F[5]:.2f}]")
 
-        # ── 4. Partition: K_ff * U_f = P_f - K_fs * U_s ──────────────────────
         K_csc   = self.K.tocsc()
         is_supp = ~is_free
 
@@ -145,7 +135,7 @@ class SolidAssembler:
         K_fs = K_csc[is_free,  :][:, is_supp ]
         P_f  = self.P[is_free]
         U_s  = U_full[is_supp]
-        P_eff = P_f - K_fs.dot(U_s)   # zero correction for force-based cut nodes (U_s=0 there)
+        P_eff = P_f - K_fs.dot(U_s)                                                            
 
         if K_ff.shape[0] == 0:
             print("Warning: Structure is fully constrained (0 free DOFs).")
@@ -157,7 +147,6 @@ class SolidAssembler:
         except (RuntimeError, ValueError) as e:
             raise Exception(f"Math Error during spsolve: {str(e)}")
 
-        # ── 5. Reconstruct & reactions ────────────────────────────────────────
         U_full[is_free] = U_f
 
         print("SolidAssembler: Computing Reactions...")

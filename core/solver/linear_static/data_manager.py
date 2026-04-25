@@ -95,10 +95,23 @@ class DataManager:
                 'id': n_data['id'],
                 'idx': self.node_id_to_idx[n_data['id']],
                 'coords': np.array([n_data['x'], n_data['y'], n_data['z']]),
-                'restraints': n_data['restraints']
+                'restraints': n_data['restraints'],
+                'diaphragm': n_data.get('diaphragm', None)
             })
             
         self.total_dofs = len(user_ids) * 6
+
+        self.diaphragm_groups = {}
+        for c in self.raw.get('constraints', []):
+            self.diaphragm_groups[c['name']] = []
+        for node in self.nodes:
+            dia = node['diaphragm']
+            if dia and dia in self.diaphragm_groups:
+                self.diaphragm_groups[dia].append(node['id'])
+        
+        active = {k: v for k, v in self.diaphragm_groups.items() if len(v) >= 2}
+        if active:
+            print(f"      Diaphragms found: { {k: len(v) for k, v in active.items()} }")
 
     def _parse_properties(self):
                             

@@ -182,7 +182,6 @@ def run_solid_analysis(mf_path, case_name="DEAD",
 
     return True, dm, stress_results, U
 
-
 def run_submodel_analysis(mf_path, selected_ids, case_name="DEAD", mesh_size=0.15, launch_viewer=False):
     """
     Runs the specialized Local Solid Submodel pipeline on selected elements.
@@ -209,8 +208,6 @@ def run_submodel_analysis(mf_path, selected_ids, case_name="DEAD", mesh_size=0.1
         dm.process_all(case_name=case_name)
         patch_data_manager(dm)
 
-        # Force-based submodeling: derive cut forces from stored frame matrices.
-        # Falls back to legacy displacement-based if matrices JSON is missing.
         matrices_path = mf_path.replace(".mf", f"_{case_name}_matrices.json")
         if os.path.exists(matrices_path):
             dm.prep_submodel_boundaries_force_based(
@@ -252,8 +249,6 @@ def run_submodel_analysis(mf_path, selected_ids, case_name="DEAD", mesh_size=0.1
         _fail(f"Submodel Error: {e}")
         return False, None, [], None
     
-    
-
 def _launch_viewer(dm, stress_results, U_full):
     """Launches SolidResultsViewer in a PyQt6 window."""
     try:

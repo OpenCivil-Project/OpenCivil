@@ -1,15 +1,15 @@
-                 
 from PyQt6.QtGui import QUndoCommand
 import copy
 from core.loads import NodalLoad, MemberLoad, MemberPointLoad
 
 class CmdDrawFrame(QUndoCommand):
+
     """
     Command to Draw a Frame Element (and potentially new nodes).
-    Undo: Deletes the frame (and nodes if they were created new).
-    Redo: Creates the frame.
     """
-    def __init__(self, model, main_window, n1_coords, n2_coords, section, rel_i=None, rel_j=None, description="Draw Frame"):
+    def __init__(self, model, main_window, n1_coords, n2_coords, section, 
+                 rel_i=None, rel_j=None, beta_angle=0.0, 
+                 cardinal_point=10, no_transform=False, description="Draw Frame"):
         super().__init__(description)
         self.model = model
         self.main_window = main_window
@@ -20,6 +20,10 @@ class CmdDrawFrame(QUndoCommand):
         self.rel_i = rel_i or [False, False, False, False, False, False]
         self.rel_j = rel_j or [False, False, False, False, False, False]
         
+        self.beta_angle = float(beta_angle)
+        self.cardinal_point = cardinal_point
+        self.no_transform = no_transform
+        
         self.created_elem_id = None
         self.created_n1_id = None
         self.created_n2_id = None
@@ -29,23 +33,42 @@ class CmdDrawFrame(QUndoCommand):
         n2 = self.model.get_or_create_node(*self.n2_coords)
         
         el = self.model.add_element(n1, n2, self.section)
+        el.beta_angle = self.beta_angle
         
         el.releases_i = self.rel_i[:]
         el.releases_j = self.rel_j[:]
+        
+        el.do_not_transform_stiffness = self.no_transform
+        
+        if self.cardinal_point != 10:
+                                                                             
+            el.cardinal_point = self.cardinal_point
+            cy, cz = el.get_cardinal_offsets()
+            
+            v1, v2, v3 = el.get_local_axes()
+            
+            global_offset = (cy * v2) + (cz * v3)
+            
+            el.joint_offset_i = global_offset
+            el.joint_offset_j = global_offset
+            
+            el.cardinal_point = 10
+        else:
+            el.cardinal_point = 10
         
         self.created_elem_id = el.id
         self.created_n1_id = n1.id
         self.created_n2_id = n2.id
         
         self._refresh_view()
-
+        
     def undo(self):
         if self.created_elem_id:
             self.model.remove_element(self.created_elem_id)
         self._refresh_view()
 
     def _refresh_view(self):
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
         
 class CmdDeleteSelection(QUndoCommand):
     """
@@ -137,18 +160,23 @@ class CmdDeleteSelection(QUndoCommand):
         self._refresh_view()
 
     def undo(self):
-                          
+                                                               
         for nid, node_obj in self.saved_nodes.items():
             self.model.nodes[nid] = node_obj
             self.model._node_counter = max(self.model._node_counter, nid + 1)
 
         for eid, el_obj in self.saved_elems.items():
-                                                    
+            
             if el_obj.node_i.id in self.model.nodes:
                 el_obj.node_i = self.model.nodes[el_obj.node_i.id]
             if el_obj.node_j.id in self.model.nodes:
                 el_obj.node_j = self.model.nodes[el_obj.node_j.id]
             
+            if hasattr(el_obj, 'section') and el_obj.section is not None:
+                sec_name = el_obj.section.name
+                if sec_name in self.model.sections:
+                    el_obj.section = self.model.sections[sec_name]
+
             self.model.elements[eid] = el_obj
             self.model._elem_counter = max(self.model._elem_counter, eid + 1)
 
@@ -158,7 +186,7 @@ class CmdDeleteSelection(QUndoCommand):
         self._refresh_view()
 
     def _refresh_view(self):
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
         
 class CmdAssignRestraints(QUndoCommand):
     def __init__(self, model, main_window, node_ids, new_restraints, description="Assign Restraints"):
@@ -177,13 +205,13 @@ class CmdAssignRestraints(QUndoCommand):
         for nid in self.node_ids:
             if nid in self.model.nodes:
                 self.model.nodes[nid].restraints = self.new_restraints[:]
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
     def undo(self):
         for nid, old_res in self.old_states.items():
             if nid in self.model.nodes:
                 self.model.nodes[nid].restraints = old_res[:]
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
 class CmdAssignDiaphragm(QUndoCommand):
     def __init__(self, model, main_window, node_ids, diaphragm_name):
@@ -202,13 +230,13 @@ class CmdAssignDiaphragm(QUndoCommand):
         for nid in self.node_ids:
             if nid in self.model.nodes:
                 self.model.nodes[nid].diaphragm_name = self.new_name
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
     def undo(self):
         for nid, old_name in self.old_states.items():
             if nid in self.model.nodes:
                 self.model.nodes[nid].diaphragm_name = old_name
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
 class CmdAssignReleases(QUndoCommand):
     def __init__(self, model, main_window, elem_ids, rel_i, rel_j):
@@ -230,14 +258,14 @@ class CmdAssignReleases(QUndoCommand):
             if eid in self.model.elements:
                 self.model.elements[eid].releases_i = self.new_rel_i[:]
                 self.model.elements[eid].releases_j = self.new_rel_j[:]
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
     def undo(self):
         for eid, (old_i, old_j) in self.old_states.items():
             if eid in self.model.elements:
                 self.model.elements[eid].releases_i = old_i[:]
                 self.model.elements[eid].releases_j = old_j[:]
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
 class CmdAssignLocalAxes(QUndoCommand):
     def __init__(self, model, main_window, elem_ids, angle):
@@ -256,13 +284,13 @@ class CmdAssignLocalAxes(QUndoCommand):
         for eid in self.elem_ids:
             if eid in self.model.elements:
                 self.model.elements[eid].beta_angle = self.new_angle
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
     def undo(self):
         for eid, old_ang in self.old_states.items():
             if eid in self.model.elements:
                 self.model.elements[eid].beta_angle = old_ang
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
 class CmdAssignInsertion(QUndoCommand):
     """
@@ -337,7 +365,7 @@ class CmdAssignInsertion(QUndoCommand):
                     el.joint_offset_i = (self.raw_i[0] * v1) + (self.raw_i[1] * v2) + (self.raw_i[2] * v3)
                     el.joint_offset_j = (self.raw_j[0] * v1) + (self.raw_j[1] * v2) + (self.raw_j[2] * v3)
                     
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
     def undo(self):
                                                        
@@ -350,7 +378,7 @@ class CmdAssignInsertion(QUndoCommand):
                 
                 el.do_not_transform_stiffness = old_no_trans
                 
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
         
 class CmdAssignJointLoad(QUndoCommand):
     """
@@ -379,7 +407,7 @@ class CmdAssignJointLoad(QUndoCommand):
             self.model.assign_joint_load(
                 nid, self.pattern_name, fx, fy, fz, mx, my, mz, self.mode
             )
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
     def undo(self):
                                                         
@@ -392,7 +420,7 @@ class CmdAssignJointLoad(QUndoCommand):
         for old_load in self.old_loads:
             self.model.loads.append(copy.deepcopy(old_load))
             
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
 class CmdAssignFrameLoad(QUndoCommand):
     """
@@ -420,7 +448,7 @@ class CmdAssignFrameLoad(QUndoCommand):
             self.model.assign_member_load(
                 eid, self.pattern_name, wx, wy, wz, proj, cs, self.mode
             )
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
     def undo(self):
                           
@@ -433,7 +461,7 @@ class CmdAssignFrameLoad(QUndoCommand):
         for old_load in self.old_loads:
             self.model.loads.append(copy.deepcopy(old_load))
             
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
 class CmdAssignPointLoad(QUndoCommand):
     """
@@ -461,7 +489,7 @@ class CmdAssignPointLoad(QUndoCommand):
             self.model.assign_member_point_load(
                 eid, self.pattern_name, f, d, rel, c, dire, lt, self.mode
             )
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
     def undo(self):
         for i in range(len(self.model.loads) - 1, -1, -1):
@@ -473,7 +501,7 @@ class CmdAssignPointLoad(QUndoCommand):
         for old_load in self.old_loads:
             self.model.loads.append(copy.deepcopy(old_load))
             
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
 class CmdAssignEndOffsets(QUndoCommand):
     def __init__(self, model, main_window, elem_ids, off_i, off_j, factor):
@@ -501,7 +529,7 @@ class CmdAssignEndOffsets(QUndoCommand):
                 el.end_offset_i = off_i
                 el.end_offset_j = off_j
                 el.rigid_zone_factor = factor
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
     def undo(self):
         for eid, (oi, oj, f) in self.old_states.items():
@@ -510,7 +538,7 @@ class CmdAssignEndOffsets(QUndoCommand):
                 el.end_offset_i = oi
                 el.end_offset_j = oj
                 el.rigid_zone_factor = f
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
 class CmdReplicate(QUndoCommand):
     """
@@ -638,7 +666,7 @@ class CmdReplicate(QUndoCommand):
         if self.delete_original and self.delete_cmd:
             self.delete_cmd.redo()
 
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()
 
     def undo(self):
                                                         
@@ -661,4 +689,4 @@ class CmdReplicate(QUndoCommand):
             if not is_connected:
                 del self.model.nodes[nid]
 
-        self.main_window.canvas.draw_model(self.model)
+        self.main_window.draw_both_canvases()

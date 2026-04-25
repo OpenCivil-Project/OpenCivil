@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
                              QCheckBox, QPushButton, QGroupBox, QGridLayout,
                              QMessageBox, QLabel, QFrame, QSizePolicy)
 from PyQt6.QtCore import Qt, QRect, QPoint, QSize
-from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPainterPath, QPolygon
+from PyQt6.QtGui import QLinearGradient, QPainter, QColor, QPen, QBrush, QFont, QPainterPath, QPolygon
 from app.commands import CmdAssignRestraints
 
 class SupportCard(QFrame):
@@ -11,10 +11,10 @@ class SupportCard(QFrame):
     support_type: "fixed" | "pinned" | "roller" | "free"
     """
 
-    HATCH_COLOR   = QColor("#555555")
-    GROUND_COLOR  = QColor("#888888")
-    MEMBER_COLOR  = QColor("#1565C0")
-    WHEEL_COLOR   = QColor("#444444")
+    HATCH_COLOR   = QColor("#000000")
+    GROUND_COLOR  = QColor("#444444")
+    MEMBER_COLOR  = QColor("#000000")
+    WHEEL_COLOR   = QColor("#000000")
     SELECT_COLOR  = QColor("#1976D2")
     BG_NORMAL     = QColor("#F5F5F5")
     BG_HOVER      = QColor("#E3F2FD")
@@ -115,17 +115,21 @@ class SupportCard(QFrame):
             self._draw_free(p, cx, node_y)
 
     def _draw_fixed(self, p, cx, tip_y, diagram_h):
-        """Thick horizontal bar + diagonal ticks — all 6 DOFs fixed."""
+        """Aligned with other support bases."""
         half = 14
+                                                                
+        ground_y = tip_y + 24 
+        
+        p.setPen(QPen(self.MEMBER_COLOR, 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawLine(cx, tip_y, cx, ground_y)
 
-        p.setPen(QPen(self.HATCH_COLOR, 3, Qt.PenStyle.SolidLine,
-                      Qt.PenCapStyle.RoundCap))
-        p.drawLine(cx - half, tip_y, cx + half, tip_y)
+        p.setPen(QPen(self.HATCH_COLOR, 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.drawLine(cx - half, ground_y, cx + half, ground_y)
 
         p.setPen(QPen(self.GROUND_COLOR, 1))
         for i in range(5):
             x = cx - half + 2 + i * 7
-            p.drawLine(x, tip_y, x - 5, tip_y + 7)
+            p.drawLine(x, ground_y, x - 5, ground_y + 7)
 
     def _draw_pinned(self, p, cx, tip_y, diagram_h):
         """Triangle + ground line + hatching."""
@@ -171,18 +175,19 @@ class SupportCard(QFrame):
         p.drawLine(cx - half - 4, ground_y, cx + half + 4, ground_y)
 
     def _draw_free(self, p, cx, node_y):
-        """Just an arrow indicating freedom — no constraint symbol."""
-                                                               
-        p.setPen(QPen(QColor("#888888"), 1, Qt.PenStyle.DashLine))
-                                  
-        ay = node_y + 20
-        p.drawLine(cx - 14, ay, cx + 14, ay)
-        p.setPen(QPen(QColor("#888888"), 1))
-                     
-        p.drawLine(cx + 14, ay, cx + 9,  ay - 4)
-        p.drawLine(cx + 14, ay, cx + 9,  ay + 4)
-        p.drawLine(cx - 14, ay, cx - 9,  ay - 4)
-        p.drawLine(cx - 14, ay, cx - 9,  ay + 4)
+        """Represents an unconstrained node (Free End)."""
+                                                                
+        r = 5
+        p.setPen(QPen(self.MEMBER_COLOR, 2))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(cx - r, node_y - r, r * 2, r * 2)
+        
+        grad = QLinearGradient(cx, node_y + r, cx, node_y + 30)
+        grad.setColorAt(0, self.MEMBER_COLOR)
+        grad.setColorAt(1, QColor(0, 0, 0, 0))                       
+        
+        p.setPen(QPen(QBrush(grad), 3))
+        p.drawLine(cx, node_y + r, cx, node_y + 25)
 
 class RestraintDialog(QDialog):
     def __init__(self, main_window):

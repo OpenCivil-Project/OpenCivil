@@ -179,6 +179,10 @@ class FrameElement:
         Applies the Cardinal Point transformation to the raw stiffness matrix.
         K_final = T_cp.T * K_pure * T_cp
         """
+                                                       
+        if getattr(self, 'do_not_transform_stiffness', False):
+            return k_pure
+            
         T = self.get_insertion_matrix()
         return T.T @ k_pure @ T
     

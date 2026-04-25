@@ -12,26 +12,8 @@ class LoadPatternDialog(QDialog):
         self.setWindowTitle("Define Load Patterns")
         self.resize(650, 400)                                     
         
-        self.style_primary_btn = """
-            QPushButton {
-                background-color: #0078D7; 
-                color: white; 
-                font-weight: bold; 
-                padding: 6px;
-                border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #005a9e; }
-        """
-        self.style_danger_btn = """
-            QPushButton {
-                background-color: #d9534f; 
-                color: white; 
-                font-weight: bold; 
-                padding: 6px;
-                border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #c9302c; }
-        """
+        self.style_primary_btn = ""
+        self.style_danger_btn = ""
         
         layout = QVBoxLayout(self)
 
@@ -72,7 +54,7 @@ class LoadPatternDialog(QDialog):
         btn_add.clicked.connect(self.add_pattern)
         
         self.btn_modify = QPushButton("Modify")
-        self.btn_modify.setStyleSheet("padding: 6px;")                            
+        self.btn_modify.setStyleSheet(self.style_danger_btn)                            
         self.btn_modify.clicked.connect(self.modify_pattern)
         
         h_action_btns.addWidget(btn_add)
@@ -118,6 +100,7 @@ class LoadPatternDialog(QDialog):
         btn_delete.clicked.connect(self.delete_pattern)
         
         btn_ok = QPushButton("OK")
+        btn_ok.setStyleSheet(self.style_danger_btn)        
         btn_ok.setFixedWidth(100)
         btn_ok.clicked.connect(self.accept)
         

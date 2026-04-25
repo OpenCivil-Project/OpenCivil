@@ -7,7 +7,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
 class DeformedShapeDialog(QDialog):
-    def __init__(self, parent=None, current_scale=50.0, is_active=False, 
+    def __init__(self, parent=None, current_scale=50.0, auto_scale=50.0, is_active=False, 
                  show_shadow=True, shadow_color=(0.6, 0.6, 0.6, 0.3),
                  is_animating=False, current_speed=1.0,
                  ltha_mode=False, ltha_n_steps=0, ltha_dt=0.01):
@@ -17,6 +17,7 @@ class DeformedShapeDialog(QDialog):
         self.resize(380, 500)
 
         self.scale_value = current_scale
+        self.auto_scale = auto_scale
         self.show_deformed = is_active
         self.shadow_active = show_shadow
         self.shadow_rgba = shadow_color
@@ -61,7 +62,17 @@ class DeformedShapeDialog(QDialog):
 
         grp_scale = QGroupBox("Scaling")
         s_layout = QVBoxLayout()
-        s_layout.addWidget(QLabel("Scale Factor (Magnification):"))
+        
+        lbl_layout = QHBoxLayout()
+        lbl_layout.addWidget(QLabel("Scale Factor (Magnification):"))
+        
+        self.btn_normalize = QPushButton("Normalize")
+        self.btn_normalize.setToolTip("Reset to auto-calculated ideal scale")
+        self.btn_normalize.clicked.connect(self.on_normalize)
+        lbl_layout.addWidget(self.btn_normalize)
+        lbl_layout.addStretch()
+        s_layout.addLayout(lbl_layout)
+                                                            
         self.spin_scale = QDoubleSpinBox()
         self.spin_scale.setRange(0.1, 10000.0)
         self.spin_scale.setValue(self.scale_value)
@@ -373,3 +384,26 @@ class DeformedShapeDialog(QDialog):
                              
         self._save_prefs()
         super().accept()
+
+    def on_normalize(self):
+        self.spin_scale.setValue(self.auto_scale)
+        self.on_apply()
+
+    def _load_prefs(self):
+        """Loads animation preferences from the JSON file."""
+        if os.path.exists(self.prefs_path):
+            try:
+                with open(self.prefs_path, 'r') as f:
+                    prefs = json.load(f)
+                    
+                if not self.is_animating:
+                                                                                                 
+                    self.anim_speed = prefs.get("anim_speed", self.anim_speed)
+                    
+                self.shadow_active = prefs.get("shadow_active", self.shadow_active)
+                
+                saved_color = prefs.get("shadow_color")
+                if saved_color and len(saved_color) == 4:
+                    self.shadow_rgba = tuple(saved_color)
+            except Exception as e:
+                print(f"Failed to load animation prefs: {e}")

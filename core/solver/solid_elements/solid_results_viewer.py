@@ -300,9 +300,6 @@ class SolidResultsViewer(QMainWindow):
         for node in nodes:
             coords[node['idx']] = node['coords']
 
-        # ── MESH PREVIEW MODE (no stress results) ──────────────────────────────
-        # When called from Preview Mesh, stresses=[] so results is empty.
-        # Guard here instead of crashing inside _get_stress_array / element_to_node_stresses.
         is_preview_only = (len(self.results) == 0)
 
         if is_preview_only:
@@ -319,8 +316,7 @@ class SolidResultsViewer(QMainWindow):
                 node_colors, _, _ = stress_to_colors(node_stress, vmin=vmin, vmax=vmax)
             else:
                 node_colors, vmin, vmax = stress_to_colors(node_stress)
-        # ───────────────────────────────────────────────────────────────────────
-
+                                                                                 
         self._node_coords_arr = coords.astype(np.float32)
         if self.U_full is not None:
             disp = np.zeros((n_nodes, 3), dtype=np.float32)
@@ -610,7 +606,6 @@ class SolidResultsViewer(QMainWindow):
         el_data  = self.dm.elements[hit_elem_idx]
         node_ids = [self.dm.nodes[ni].get('id', ni+1) for ni in el_data['node_indices']]
 
-        # Preview mode: no stress results loaded yet
         if self._elem_stress_arr is None:
             self._query_lbl.setText(
                 f"ELEMENT #{el_data.get('id', hit_elem_idx+1)}\n"

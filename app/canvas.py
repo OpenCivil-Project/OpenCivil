@@ -1,4 +1,5 @@
 import numpy as np
+import math
 import pyqtgraph.opengl as gl
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, pyqtSignal, QRect, QTimer
@@ -34,10 +35,11 @@ class MCanvas3D(gl.GLViewWidget):
             "slab_opacity": 0.4
         }
         self.view_cube = ViewCube()
-        self.opts['distance'] = 40
+        self.opts['distance']  = 40
         self.opts['elevation'] = 30
-        self.opts['azimuth'] = 45
-        self.opts['fov'] = 60                              
+        self.opts['azimuth']   = 45
+        self.opts['fov']       = 60
+        self.opts['center']    = QVector3D(0, 0, 0)                                                     
         self.setBackgroundColor('#FFFFFF')
 
         self.current_model = None
@@ -94,7 +96,13 @@ class MCanvas3D(gl.GLViewWidget):
         self.static_items = []      
         self.node_items = []         
         self.element_items = []
+        self._axis_items = []                                                          
         self.load_items = []
+        self._support_items = []
+        self._support_positions = {'fixed': [], 'pinned': [], 'roller': [], 'custom': []}
+        self._support_rebuild_timer = QTimer()
+        self._support_rebuild_timer.setSingleShot(True)
+        self._support_rebuild_timer.timeout.connect(self._rebuild_support_items)
         self._sel_overlay_items = []      
         self.last_selection_state = {'nodes': [], 'elements': [], 'blink': True}
 
@@ -116,12 +124,6 @@ class MCanvas3D(gl.GLViewWidget):
         self.pivot_timer = QTimer()
         self.pivot_timer.setSingleShot(True)
         self.pivot_timer.timeout.connect(lambda: self.pivot_dot.setVisible(False))
-
-        self._hover_timer = QTimer()
-        self._hover_timer.setSingleShot(True)
-        self._hover_timer.setInterval(80)
-        self._pending_hover_pos = (0, 0)
-        self._hover_timer.timeout.connect(lambda: self._handle_hover_tooltip(*self._pending_hover_pos))
 
         self.snap_ring = gl.GLLinePlotItem(pos=np.array([[0,0,0]]), mode='line_strip', 
                                            color=(1, 0, 0, 0.4), width=1.5, antialias=True)
@@ -216,27 +218,60 @@ class MCanvas3D(gl.GLViewWidget):
         
         return False
 
+    def compute_model_bbox(self, model=None):
+        """
+        Compute bounding box from ACTUAL node positions (not the grid).
+        Returns (center: QVector3D, diagonal: float, bounds: dict | None).
+        bounds is None when the model has no nodes yet — callers should fall
+        back to the grid in that case.
+        """
+        m = model or self.current_model
+        if not m or not m.nodes:
+            return QVector3D(0, 0, 0), 1.0, None
+
+        xs = [n.x for n in m.nodes.values()]
+        ys = [n.y for n in m.nodes.values()]
+        zs = [n.z for n in m.nodes.values()]
+
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        min_z, max_z = min(zs), max(zs)
+
+        cx = (min_x + max_x) / 2.0
+        cy = (min_y + max_y) / 2.0
+        cz = (min_z + max_z) / 2.0
+
+        dx, dy, dz = max_x - min_x, max_y - min_y, max_z - min_z
+        diagonal = max(math.sqrt(dx*dx + dy*dy + dz*dz), 0.001)
+
+        return QVector3D(cx, cy, cz), diagonal, {
+            'min': (min_x, min_y, min_z),
+            'max': (max_x, max_y, max_z),
+            'span': (dx, dy, dz),
+        }
+
     def set_standard_view(self, view_name):
                                               
-        mid_x, mid_y, mid_z = 0, 0, 0
-        max_dim = 40
-        if self.current_model and self.current_model.grid:
-                                                            
-            gx = self.current_model.grid.x_grids
-            gy = self.current_model.grid.y_grids
-            gz = self.current_model.grid.z_grids
-            if gx and gy and gz:
-                mid_x = (min(gx) + max(gx)) / 2
-                mid_y = (min(gy) + max(gy)) / 2
-                mid_z = (min(gz) + max(gz)) / 2
-                max_dim = max(max(gx)-min(gx), max(gy)-min(gy), max(gz)-min(gz)) * 1.5
-
-        target_center = QVector3D(mid_x, mid_y, mid_z)
+        target_center, diagonal, bounds = self.compute_model_bbox()
+        if bounds:
+            max_dim = max(diagonal * 1.5, 0.1)
+        else:
+                                                                                        
+            max_dim = 40
+            mid_x = mid_y = mid_z = 0.0
+            if self.current_model and self.current_model.grid:
+                gx = self.current_model.grid.x_grids
+                gy = self.current_model.grid.y_grids
+                gz = self.current_model.grid.z_grids
+                if gx and gy and gz:
+                    mid_x = (min(gx) + max(gx)) / 2.0
+                    mid_y = (min(gy) + max(gy)) / 2.0
+                    mid_z = (min(gz) + max(gz)) / 2.0
+                    max_dim = max(max(gx)-min(gx), max(gy)-min(gy), max(gz)-min(gz)) * 1.5
+            target_center = QVector3D(mid_x, mid_y, mid_z)
         target_dist = max_dim
         
         t_az, t_el, t_fov = -45, 30, 60
-        
-        import math
 
         if view_name == "ISO":
             t_az, t_el, t_fov = -135, 35.264, 1
@@ -296,7 +331,10 @@ class MCanvas3D(gl.GLViewWidget):
         if sel_nodes is not None: self.selected_node_ids = sel_nodes
         self.load_labels = []
 
-        self.node_items.clear()     
+        self.node_items.clear()
+        self._support_items.clear()                                                                
+        self._support_positions = {'fixed': [], 'pinned': [], 'roller': [], 'custom': []}
+        self.element_items.clear()     
         self.element_items.clear()
 
         if hasattr(self, 'load_items'): self.load_items.clear()
@@ -312,7 +350,9 @@ class MCanvas3D(gl.GLViewWidget):
         if self.show_joints or self.show_supports:
             self._draw_nodes(model)
         
-        if self.show_constraints:  
+        in_analysis_mode = hasattr(model, 'has_results') and model.has_results
+        
+        if self.show_constraints and not in_analysis_mode:  
             self._draw_constraints(model)
                                                   
         if self.view_extruded:
@@ -347,6 +387,16 @@ class MCanvas3D(gl.GLViewWidget):
 
         self._sel_overlay_items = []
         self._rebuild_selection_overlay()
+
+        if model.nodes:
+            center, diag, _ = self.compute_model_bbox(model)
+            self.opts['center'] = center                                                      
+            self.camera.set_model_scale(max(diag, 0.001))
+                                                                                  
+            current_dist = self.opts.get('distance', 40)
+            needed_dist  = max(diag * 1.5, 0.1)
+            if needed_dist > current_dist * 2.0:
+                self.camera.animate_to(target_center=center, target_dist=needed_dist)
 
     def update_selection_overlay(self, sel_elems, sel_nodes):
         """Fast-path selection update. Skips full geometry rebuild."""
@@ -683,10 +733,10 @@ class MCanvas3D(gl.GLViewWidget):
             self.addItem(item)
             self.node_items.append(item)
 
-        if supports_fixed: self._draw_support_meshes(supports_fixed, 'fixed')
-        if supports_pinned: self._draw_support_meshes(supports_pinned, 'pinned')
-        if supports_roller: self._draw_support_meshes(supports_roller, 'roller')
-        if supports_custom: self._draw_support_meshes(supports_custom, 'custom')
+        if supports_fixed:  self._support_positions['fixed']  = supports_fixed;  self._draw_support_meshes(supports_fixed,  'fixed')
+        if supports_pinned: self._support_positions['pinned'] = supports_pinned; self._draw_support_meshes(supports_pinned, 'pinned')
+        if supports_roller: self._support_positions['roller'] = supports_roller; self._draw_support_meshes(supports_roller, 'roller')
+        if supports_custom: self._support_positions['custom'] = supports_custom; self._draw_support_meshes(supports_custom, 'custom')
         
         if ghost_pos and self.show_joints:
             item = gl.GLScatterPlotItem(
@@ -1058,13 +1108,13 @@ class MCanvas3D(gl.GLViewWidget):
             self.addItem(mesh)
 
         if show_edges and self.ex_edges:
-             ed = gl.GLLinePlotItem(
-                 pos=np.array(self.ex_edges), 
-                 color=np.array(self.ex_edge_colors), 
-                 mode='lines', width=edge_width, antialias=True 
-             )
-             ed.setGLOptions('opaque') 
-             self.addItem(ed)
+            ed = gl.GLLinePlotItem(
+                pos=np.array(self.ex_edges), 
+                color=np.array(self.ex_edge_colors), 
+                mode='lines', width=edge_width, antialias=True
+            )
+            ed.setGLOptions('opaque')                    
+            self.addItem(ed)
 
     def _add_loft_segment(self, c1, c2, v2_a, v3_a, v2_b, v3_b, shape, color, show_edges, edge_color, draw_start_ring=False, draw_end_ring=False, draw_caps=False):
         """
@@ -1286,7 +1336,7 @@ class MCanvas3D(gl.GLViewWidget):
         elif s_type == 'roller': c = (0.20, 0.65, 0.50, 1.0)              
         else: c = (0.85, 0.55, 0.20, 1.0)                                   
 
-        s = 0.25 
+        s = self._screen_scale() * 5
 
         def add_box(cx, cy, cz, wx, wy, wz):
             nonlocal idx_offset
@@ -1397,6 +1447,20 @@ class MCanvas3D(gl.GLViewWidget):
             glOptions='opaque'
         )
         self.addItem(mesh)
+        self._support_items.append(mesh)
+
+    def _rebuild_support_items(self):
+        """Rebuild support meshes with current zoom level — keeps symbols screen-size-stable."""
+        for item in self._support_items:
+            try: self.removeItem(item)
+            except Exception: pass
+        self._support_items.clear()
+
+        sp = self._support_positions
+        if sp['fixed']:  self._draw_support_meshes(sp['fixed'],  'fixed')
+        if sp['pinned']: self._draw_support_meshes(sp['pinned'], 'pinned')
+        if sp['roller']: self._draw_support_meshes(sp['roller'], 'roller')
+        if sp['custom']: self._draw_support_meshes(sp['custom'], 'custom')
 
     def _draw_loads(self, model):
         """
@@ -1439,7 +1503,8 @@ class MCanvas3D(gl.GLViewWidget):
 
             node = model.nodes.get(load.node_id)
             if not node: continue
-            if not self._is_visible(node.x, node.y, node.z): continue
+                                                                           
+            if self._get_visibility_state(node.x, node.y, node.z) != 2: continue
             
             origin = np.array([node.x, node.y, node.z])
             is_selected = (node.id in self.selected_node_ids)
@@ -1489,6 +1554,78 @@ class MCanvas3D(gl.GLViewWidget):
             'text': f"{display_val:.2f} {unit_str}",
             'color': color
         })
+
+    def _screen_scale(self):
+        """
+        Returns world-units-per-pixel for the current camera state.
+        Multiply by a target pixel size to get a zoom-invariant world length.
+        """
+        dist = self.opts.get('distance', 40)
+        fov  = self.opts.get('fov', 60)
+        h_px = max(self.height(), 1)
+        if fov and fov > 0:
+            visible_h = 2.0 * dist * math.tan(math.radians(fov) / 2.0)
+        else:
+                                                                                      
+            visible_h = dist * 2.0
+        return visible_h / h_px
+
+    def _rebuild_axis_items(self):
+        """Remove any previously added GL axis items. Axes are now drawn as a
+        2D painter overlay in paintEvent so they always render on top."""
+        for item in self._axis_items:
+            try:
+                self.removeItem(item)
+            except Exception:
+                pass
+        self._axis_items.clear()
+
+    def _draw_axis_overlay(self, painter, mvp, w, h):
+        """
+        Draw X/Y/Z axis lines as a 2D QPainter overlay so they are always
+        visible on top of the mesh.  Projects the world-space origin and each
+        unit axis point through the current MVP, then draws fixed-length 60 px
+        lines in screen space — zoom-invariant and never occluded.
+        """
+        if not self.current_model:
+            return
+
+        origin_s = self._project_to_screen(0, 0, 0, mvp, w, h)
+        if not origin_s:
+            return
+        ox, oy = origin_s
+
+        AXIS_PX  = 80                                          
+        LABEL_PAD = 6
+
+        from PyQt6.QtGui import QFont, QColor, QPen
+        ax_font = QFont("Consolas", 12, QFont.Weight.Bold)
+
+        axes = [
+            ((1, 0, 0), QColor(255,  50,  50), "X"),
+            ((0, 1, 0), QColor( 50, 200,  50), "Y"),
+            ((0, 0, 1), QColor( 50,  50, 255), "Z"),
+        ]
+
+        for (ax, ay, az), color, label in axes:
+            tip_s = self._project_to_screen(ax, ay, az, mvp, w, h)
+            if not tip_s:
+                continue
+            dx = tip_s[0] - ox
+            dy = tip_s[1] - oy
+            length = math.sqrt(dx * dx + dy * dy)
+            if length < 1e-6:
+                continue
+
+            ex = ox + (dx / length) * AXIS_PX
+            ey = oy + (dy / length) * AXIS_PX
+
+            painter.setPen(QPen(color, 2))
+            painter.drawLine(int(ox), int(oy), int(ex), int(ey))
+
+            painter.setFont(ax_font)
+            painter.setPen(color)
+            painter.drawText(int(ex) + LABEL_PAD, int(ey) + LABEL_PAD, label)
 
     def _draw_reference_grids(self, model):
 
@@ -1553,42 +1690,7 @@ class MCanvas3D(gl.GLViewWidget):
             self.addItem(gl.GLLinePlotItem(pos=np.array(dim_pos), mode='lines', 
                                            color=c, width=2, antialias=True))
         
-        from PyQt6.QtGui import QFont, QColor
-        
-        axis_len = 1.5
-        text_offset = axis_len + 0.15
-        
-        ax_font = QFont("Consolas", 14, QFont.Weight.Bold)
-        
-        on_top_opts = {
-            'glEnable': (GL_BLEND,),
-            'glBlendFunc': (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA),
-            'glDisable': (GL_DEPTH_TEST,)
-        }
-
-        line_x = gl.GLLinePlotItem(pos=np.array([[0,0,0], [axis_len,0,0]]), color=(1,0,0,1), width=2, antialias=True)
-        line_x.setGLOptions(on_top_opts)
-        self.addItem(line_x)
-        
-        text_x = gl.GLTextItem(pos=np.array([text_offset, 0, 0]), text="X", color=QColor(255, 50, 50), font=ax_font)
-        text_x.setGLOptions(on_top_opts)
-        self.addItem(text_x)
-        
-        line_y = gl.GLLinePlotItem(pos=np.array([[0,0,0], [0,axis_len,0]]), color=(0,1,0,1), width=2, antialias=True)
-        line_y.setGLOptions(on_top_opts)
-        self.addItem(line_y)
-        
-        text_y = gl.GLTextItem(pos=np.array([0, text_offset, 0]), text="Y", color=QColor(50, 200, 50), font=ax_font)
-        text_y.setGLOptions(on_top_opts)
-        self.addItem(text_y)
-        
-        line_z = gl.GLLinePlotItem(pos=np.array([[0,0,0], [0,0,axis_len]]), color=(0,0,1,1), width=1.5, antialias=True)
-        line_z.setGLOptions(on_top_opts)
-        self.addItem(line_z)
-        
-        text_z = gl.GLTextItem(pos=np.array([0, 0, text_offset]), text="Z", color=QColor(50, 50, 255), font=ax_font)
-        text_z.setGLOptions(on_top_opts)
-        self.addItem(text_z)
+        self._rebuild_axis_items()                                      
 
     def get_snap_point(self, mouse_x, mouse_y):
         if not self.snapping_enabled:
@@ -2307,12 +2409,7 @@ class MCanvas3D(gl.GLViewWidget):
 
         self._is_navigating = is_middle_pan or is_tool_pan or is_rotating or self.is_selecting
 
-        if not self._is_navigating:
-            self._pending_hover_pos = (event.pos().x(), event.pos().y())
-            if not self._hover_timer.isActive():
-                self._hover_timer.start()
-        else:
-            self._hover_timer.stop()
+        if self._is_navigating and self.current_hover_data is not None:
             self.current_hover_data = None
             self.update()
         if self.is_selecting:
@@ -2374,12 +2471,16 @@ class MCanvas3D(gl.GLViewWidget):
             self.snap_dot.setVisible(False)
             self._update_beam_col_preview(event.pos().x(), event.pos().y())
 
+        if is_middle_pan or is_tool_pan or is_rotating:
+            self._support_rebuild_timer.start(80)
+
     def wheelEvent(self, event):
                          
         delta = event.angleDelta().y()
         pos = event.position()
         
         self.camera.zoom(delta, pos.x(), pos.y(), self.width(), self.height())
+        self._support_rebuild_timer.start(60) 
         
     def mouseReleaseEvent(self, event):
                                            
@@ -2408,6 +2509,8 @@ class MCanvas3D(gl.GLViewWidget):
                     self.process_box_selection(self.drag_start, event.pos())
                 else:
                     self.pick_single_object(event.pos())
+                                                                             
+                    self._handle_hover_tooltip(event.pos().x(), event.pos().y())
 
             self.drag_start = None
             self.drag_current = None
@@ -2416,14 +2519,14 @@ class MCanvas3D(gl.GLViewWidget):
         super().mouseReleaseEvent(event)
         
     def pick_single_object(self, pos):
-        """Simulates a tiny box selection around the cursor to pick one object."""
-                                                              
-        p_start = pos
-        p_end = type(pos)(pos.x() + 10, pos.y() + 10) 
-        
-        start_centered = type(pos)(pos.x() - 5, pos.y() - 5)
-        end_centered   = type(pos)(pos.x() + 5, pos.y() + 5)
-        
+        """
+        Picks the object nearest to pos.
+        Uses crossing-select mode (p_end.x < p_start.x) so element lines are
+        tested with _line_intersects_rect rather than requiring both endpoints
+        inside the tiny hit box — which would make frame click-selection impossible.
+        """
+        start_centered = type(pos)(pos.x() + 5, pos.y() - 5)
+        end_centered   = type(pos)(pos.x() - 5, pos.y() + 5)
         self.process_box_selection(start_centered, end_centered)
 
     def paintEvent(self, event):
@@ -2535,6 +2638,12 @@ class MCanvas3D(gl.GLViewWidget):
             text_rect = QRect(int(hx) + 6, int(hy) + 5, rect.width(), rect.height())
             painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft, text)
             
+        if self.current_model:
+            _w = self.width(); _h = self.height()
+            _full = (0, 0, _w, _h)
+            _mvp = np.array((self.projectionMatrix(region=_full, viewport=_full) * self.viewMatrix()).data()).reshape(4, 4).T
+            self._draw_axis_overlay(painter, _mvp, _w, _h)
+
         painter.end()
             
     def process_box_selection(self, p_start, p_end):
@@ -2855,8 +2964,9 @@ class MCanvas3D(gl.GLViewWidget):
             
             v1 = self._get_visibility_state(el.node_i.x, el.node_i.y, el.node_i.z)
             v2 = self._get_visibility_state(el.node_j.x, el.node_j.y, el.node_j.z)
-            if v1 != 2 or v2 != 2: continue
-
+            if v1 == 0 or v2 == 0: continue
+            
+            is_ghosted = (v1 != 2 or v2 != 2)
             is_selected = (el.id in self.selected_element_ids)
 
             p1 = np.array([el.node_i.x, el.node_i.y, el.node_i.z])
@@ -2898,6 +3008,19 @@ class MCanvas3D(gl.GLViewWidget):
                 pt_base_2 = p2 + visual_shift
                 pt_top_1  = p1 + offset_vec + visual_shift
                 pt_top_2  = p2 + offset_vec + visual_shift
+
+                if is_ghosted:
+                    c_ghost_dim      = (*base_rgb, 0.08)
+                    c_ghost_line_dim = (*base_rgb, 0.20)
+                    ghost_verts.extend([pt_base_1, pt_base_2, pt_top_2, pt_top_1])
+                    idx = ghost_idx_counter
+                    ghost_faces.extend([[idx, idx+1, idx+2], [idx, idx+2, idx+3]])
+                    for _ in range(4): ghost_colors.append(c_ghost_dim)
+                    ghost_idx_counter += 4
+                    
+                    ghost_lines.extend([pt_top_1, pt_top_2])
+                    ghost_line_colors.extend([c_ghost_line_dim, c_ghost_line_dim])
+                    continue 
 
                 if not is_selected:
                                    
@@ -3053,22 +3176,25 @@ class MCanvas3D(gl.GLViewWidget):
                     conn_lines.append(c_pt)
                     conn_lines.append([n.x, n.y, n.z])
 
-        if master_pos:
-            self.addItem(gl.GLScatterPlotItem(
-                pos=np.array(master_pos), 
-                size=15,                    
-                color=(0, 1, 0, 1),                
-                pxMode=True                                                            
-            ))
-
         if conn_lines:
             self.addItem(gl.GLLinePlotItem(
                 pos=np.array(conn_lines),
-                color=(0, 1, 0, 0.5),                         
+                color=(0, 1, 0, 0.85),                             
                 mode='lines',
-                width=1.0,
+                width=2.5,                                  
                 antialias=True
             ))
+
+        if master_pos:
+            master_item = gl.GLScatterPlotItem(
+                pos=np.array(master_pos), 
+                size=5,                                                      
+                color=(1.0, 0.85, 0.0, 1.0),                     
+                pxMode=True                                                            
+            )
+                                                                                          
+            master_item.setGLOptions('translucent')
+            self.addItem(master_item)
 
     def _draw_member_point_loads(self, model):
         """
@@ -3095,7 +3221,8 @@ class MCanvas3D(gl.GLViewWidget):
             
             v1 = self._get_visibility_state(el.node_i.x, el.node_i.y, el.node_i.z)
             v2 = self._get_visibility_state(el.node_j.x, el.node_j.y, el.node_j.z)
-            if v1 != 2 or v2 != 2: continue
+            if v1 == 0 or v2 == 0: continue
+            is_ghosted = (v1 != 2 or v2 != 2)
 
             is_selected = (el.id in self.selected_element_ids)
 
@@ -3129,7 +3256,7 @@ class MCanvas3D(gl.GLViewWidget):
             
             is_moment = hasattr(load, 'load_type') and load.load_type == "Moment"
             
-            c = (0, 0, 0, 1)   
+            c = (0, 0, 0, 0.15) if is_ghosted else (0, 0, 0, 1)
 
             tip = load_pos
             tail = tip - (draw_dir * L)
@@ -3154,7 +3281,8 @@ class MCanvas3D(gl.GLViewWidget):
             if is_moment:
                 add_head(tip - (draw_dir * (H * 0.8)))
 
-            self._add_load_label(load_pos, draw_dir, val, "Moment" if is_moment else "Force", c, owner_id=el.id, owner_type='element')
+            if not is_ghosted:
+                self._add_load_label(load_pos, draw_dir, val, "Moment" if is_moment else "Force", c, owner_id=el.id, owner_type='element')
 
         if arrow_lines:
             self.addItem(gl.GLLinePlotItem(
@@ -3268,6 +3396,7 @@ class MCanvas3D(gl.GLViewWidget):
                 self._draw_elements_wireframe(self.current_model)
 
     def paintGL(self, *args, **kwargs):
+        glEnable(GL_MULTISAMPLE)
         super().paintGL()
         
         try:
