@@ -125,29 +125,52 @@ def run_buckling_analysis(input_json_path, output_json_path, results_path, matri
     KG_free = KG_full.tocsc()[is_free, :][:, is_free]
 
     try:
-        safe_num_modes = min(req_modes, max(1, num_free_dofs - 2))
-        if safe_num_modes < req_modes:
-            print(f"Warning: Model only has {num_free_dofs} free DOFs. Clamped to {safe_num_modes} modes.")
-            req_modes = safe_num_modes
+        print(f"[5/6] Solving Buckling Eigenvalues...")
+        
+        if num_free_dofs < 100:
+                                                                            
+            import scipy.linalg as la
+            print(f"      Using Dense Solver (Small Model: {num_free_dofs} DOFs)")
+            
+            K_dense = K_free.toarray()
+            KG_dense = KG_free.toarray()
+            
+            eigenvalues, eigenvectors = la.eig(K_dense, KG_dense)
+            
+            valid_modes = []
+            for i in range(len(eigenvalues)):
+                lam = eigenvalues[i].real
+                                                                                       
+                if np.isfinite(lam) and lam > 1e-6 and abs(eigenvalues[i].imag) < 1e-6:
+                    valid_modes.append((lam, eigenvectors[:, i].real))
+            
+            valid_modes.sort(key=lambda x: x[0])
+            valid_modes = valid_modes[:req_modes]
+            
+        else:
+                                                             
+            safe_num_modes = min(req_modes, max(1, num_free_dofs - 2))
+            if safe_num_modes < req_modes:
+                print(f"Warning: Model only has {num_free_dofs} free DOFs. Clamped to {safe_num_modes} modes.")
+                req_modes = safe_num_modes
 
-        print(f"[5/6] Solving Buckling Eigenvalues (Shift-Invert)...")
-        
-        eigenvalues, eigenvectors = eigsh(A=K_free, M=KG_free, k=req_modes, sigma=1.0, which='LM')
-        
-        valid_modes = []
-        for i in range(len(eigenvalues)):
-            lam = eigenvalues[i]
-            if lam > 1e-6:                                                              
-                valid_modes.append((lam, eigenvectors[:, i]))
+            print(f"      Using Sparse Solver (Shift-Invert ARPACK)")
+            eigenvalues, eigenvectors = eigsh(A=K_free, M=KG_free, k=req_modes, sigma=1.0, which='LM')
+            
+            valid_modes = []
+            for i in range(len(eigenvalues)):
+                lam = eigenvalues[i]
+                if lam > 1e-6:                                                              
+                    valid_modes.append((lam, eigenvectors[:, i]))
 
-        valid_modes.sort(key=lambda x: x[0])                                            
-        
+            valid_modes.sort(key=lambda x: x[0]) 
+
         print(f"      Converged. Found {len(valid_modes)} buckling modes.")
 
     except Exception as e:
         err_str = str(e)
         print(f"FATAL: Eigen Solver Error: {err_str}")
-        return _write_error(output_json_path, "E303", f"ARPACK Error: {err_str}")
+        return _write_error(output_json_path, "E303", f"Solver Error: {err_str}")
 
     print("[6/6] Formatting Results...")
     

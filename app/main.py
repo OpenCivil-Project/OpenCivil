@@ -192,7 +192,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         
-        self.setWindowTitle("OpenCivil v0.7.52")
+        self.setWindowTitle("OpenCivil v0.7.61")
         self.resize(1200, 800)
 
         icon_path = os.path.join(root_dir, "graphic", "logo.png") 
@@ -2284,7 +2284,7 @@ class MainWindow(QMainWindow):
     def update_window_title(self):
         """Updates window title to show currently active filename and version."""
                                                               
-        base_title = "OpenCivil v0.7.55" 
+        base_title = "OpenCivil v0.7.61" 
         
         if self.model and getattr(self.model, 'file_path', None):
             short_name = os.path.basename(self.model.file_path)
