@@ -114,20 +114,18 @@ class OPENCIVILSplash(QSplashScreen):
         QApplication.processEvents()
 
 class VideoSplash(QWidget):
-                                                     
     finished = pyqtSignal()
 
     def __init__(self, video_path):
         super().__init__()
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
-        
         self.resize(800, 450) 
-                          
         self.center_on_screen()
 
         self.video_widget = QVideoWidget(self)
-        self.player = QMediaPlayer()
-        self.audio_output = QAudioOutput()
+                                                                                    
+        self.player = QMediaPlayer(self)
+        self.audio_output = QAudioOutput(self)
 
         self.player.setVideoOutput(self.video_widget)
         self.player.setAudioOutput(self.audio_output)
@@ -140,21 +138,63 @@ class VideoSplash(QWidget):
         self.audio_output.setVolume(0.7)
 
         self.player.mediaStatusChanged.connect(self.on_media_status_changed)
-                                                                
         self.player.errorOccurred.connect(self.finished.emit)
 
     def start(self):
         self.player.play()
 
+    def cleanup_player(self):
+        """Aggressively tears down FFmpeg to prevent ghost processes."""
+        if hasattr(self, 'player') and self.player is not None:
+            self.player.stop()
+            self.player.setSource(QUrl()) 
+                                                                        
+            self.player.setVideoOutput(None) 
+            self.player.setAudioOutput(None)
+            self.player.deleteLater()
+            self.player = None
+            
+        if hasattr(self, 'audio_output') and self.audio_output is not None:
+            self.audio_output.deleteLater()
+            self.audio_output = None
+
     def on_media_status_changed(self, status):
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self.cleanup_player()
             self.finished.emit()
 
     def center_on_screen(self):
         qr = self.frameGeometry()
         cp = QApplication.primaryScreen().availableGeometry().center()
         qr.moveCenter(cp)
-        self.move(qr.topLeft()) 
+        self.move(qr.topLeft())
+
+from PyQt6.QtCore import QObject, QEvent, QPropertyAnimation, QEasingCurve
+from PyQt6.QtWidgets import QDialog
+
+class GlobalDialogAnimator(QObject):
+    """Intercepts all QDialogs globally and applies a fade-in animation."""
+    def eventFilter(self, obj, event):
+                                                            
+        if event.type() == QEvent.Type.Show and isinstance(obj, QDialog):
+            if not obj.property("_ghost_animated"):
+                obj.setProperty("_ghost_animated", True)
+                
+                obj.setWindowOpacity(0.0)
+                
+                anim = QPropertyAnimation(obj, b"windowOpacity", obj)
+                anim.setDuration(200) 
+                anim.setStartValue(0.0)
+                anim.setEndValue(1.0)
+                anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+                
+                obj._ghost_anim = anim
+                anim.start()
+        
+        elif event.type() == QEvent.Type.Hide and isinstance(obj, QDialog):
+            obj.setProperty("_ghost_animated", False)
+                
+        return super().eventFilter(obj, event)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -216,9 +256,6 @@ class MainWindow(QMainWindow):
         self.picking_replicate = False 
         self.replicate_p1 = None      
         self.replicate_dialog = None
-
-        self.current_view_mode = "3D"
-        self.current_grid_index = 0
 
         self.sound_effect = QSoundEffect()
         
@@ -357,10 +394,6 @@ class MainWindow(QMainWindow):
         self.toolbar.setMovable(False)
         self.toolbar.setIconSize(QSize(20, 20))
 
-        self.toolbar = self.addToolBar("Views")
-        self.toolbar.setMovable(False)
-        self.toolbar.setIconSize(QSize(20, 20))
-
         self.toolbar.setStyleSheet("""
             QToolButton {
                 border: 1px solid transparent;
@@ -455,17 +488,20 @@ class MainWindow(QMainWindow):
         self.toolbar.addSeparator()
         self.toolbar.addSeparator()
 
-        btn_xy = QAction(create_plane_icon("XY"), "XY Plan", self)
-        btn_xy.triggered.connect(lambda: self.set_view_2d("XY"))
-        self.toolbar.addAction(btn_xy)
+        self.btn_xy = QAction(create_plane_icon("XY"), "XY Plan", self)
+        self.btn_xy.setCheckable(True)
+        self.btn_xy.triggered.connect(lambda: self.set_view_2d("XY"))
+        self.toolbar.addAction(self.btn_xy)
 
-        btn_xz = QAction(create_plane_icon("XZ"), "XZ Elev", self)
-        btn_xz.triggered.connect(lambda: self.set_view_2d("XZ"))
-        self.toolbar.addAction(btn_xz)
-        
-        btn_yz = QAction(create_plane_icon("YZ"), "YZ Elev", self)
-        btn_yz.triggered.connect(lambda: self.set_view_2d("YZ"))
-        self.toolbar.addAction(btn_yz)
+        self.btn_xz = QAction(create_plane_icon("XZ"), "XZ Elev", self)
+        self.btn_xz.setCheckable(True)
+        self.btn_xz.triggered.connect(lambda: self.set_view_2d("XZ"))
+        self.toolbar.addAction(self.btn_xz)
+
+        self.btn_yz = QAction(create_plane_icon("YZ"), "YZ Elev", self)
+        self.btn_yz.setCheckable(True)
+        self.btn_yz.triggered.connect(lambda: self.set_view_2d("YZ"))
+        self.toolbar.addAction(self.btn_yz)
 
         self.toolbar.addSeparator()
         self.toolbar.addSeparator()
@@ -842,52 +878,101 @@ class MainWindow(QMainWindow):
             self.draw_both_canvases()
 
     def set_view_3d(self):
-        self.current_view_mode = "3D"
-        self.active_canvas.active_view_plane = None 
-        self.active_canvas.set_standard_view("3D")  
+        self._reset_plane_buttons()
+        self.active_canvas._view_mode = "3D"
+        self.active_canvas.active_view_plane = None
         if self.model: self.draw_both_canvases()
+        self.active_canvas.set_standard_view("3D")
         self.status.showMessage("View: Full 3D")
         if self.cross_brace_dialog:
             self.cross_brace_dialog.update_plane_status(None)
 
-    def set_view_2d(self, axis):
-        self.current_view_mode = axis
-        self.current_grid_index = 0
-        self.update_view_layer()
+        self.update_linked_planes()
 
+    def _reset_plane_buttons(self):
+        for btn in [self.btn_xy, self.btn_xz, self.btn_yz]:
+            btn.setChecked(False)
+        self.active_canvas._plane_state = 0
+
+    def set_view_2d(self, axis):
+        cvs = self.active_canvas
+        is_same_axis = (cvs._view_mode == axis)
+
+        if not is_same_axis:
+                                                                              
+            self._reset_plane_buttons()
+            cvs._view_mode = axis
+            cvs._grid_index = 0
+            cvs.show_ghost_structure = True
+            cvs._plane_state = 1
+            getattr(self, f'btn_{axis.lower()}').setChecked(True)
+            self.update_view_layer()
+            self.status.showMessage(f"View: {axis} — Plane (Ghost ON)")
+    
+        elif cvs._plane_state == 1:
+                                                                              
+            cvs.show_ghost_structure = False
+            cvs._plane_state = 2
+            self.refresh_canvas()
+            self.status.showMessage(f"View: {axis} — Strict Plane Only")
+
+        elif cvs._plane_state == 2:
+                                                                               
+            cvs._plane_state = 3
+            cvs.show_ghost_structure = False                          
+            cvs.set_standard_view(axis)
+            self.refresh_canvas()
+            self.status.showMessage(f"View: {axis} — Ortho 2D")
+
+        else:
+                                                                               
+            cvs.show_ghost_structure = True
+            cvs._plane_state = 1
+            cvs._grid_index = 0
+            self.update_view_layer()
+            self.status.showMessage(f"View: {axis} — Plane (Ghost ON)")
+
+        self.update_linked_planes()
+        
     def move_view_layer(self, direction):
-        if self.current_view_mode == "3D": return
-        self.current_grid_index += direction
+        if self.active_canvas._view_mode in ["3D", "ISO"]: return
+        
+        self.active_canvas._grid_index += direction
         self.update_view_layer()
+        self.update_linked_planes()
 
     def update_view_layer(self):
+        cvs = self.active_canvas
         grids = self.model.grid
-        if self.current_view_mode == "XY":
+        if cvs._view_mode == "XY":
             grid_list = grids.z_grids; axis = 'z'
-        elif self.current_view_mode == "XZ":
+        elif cvs._view_mode == "XZ":
             grid_list = grids.y_grids; axis = 'y'
-        elif self.current_view_mode == "YZ":
+        elif cvs._view_mode == "YZ":
             grid_list = grids.x_grids; axis = 'x'
         else: return
 
         if not grid_list: return 
 
-        self.current_grid_index = max(0, min(self.current_grid_index, len(grid_list) - 1))
-        val = grid_list[self.current_grid_index]
-        self.active_canvas.active_view_plane = {'axis': axis, 'value': val}
+        cvs._grid_index = max(0, min(cvs._grid_index, len(grid_list) - 1))
+        val = grid_list[cvs._grid_index]
+        cvs.active_view_plane = {'axis': axis, 'value': val}
         if self.model: self.draw_both_canvases()
-        self.status.showMessage(f"Filtered View: {self.current_view_mode} @ {axis.upper()}={val:.2f}m")
+        self.status.showMessage(f"Filtered View: {cvs._view_mode} @ {axis.upper()}={val:.2f}m")
         if self.cross_brace_dialog:
-            self.cross_brace_dialog.update_plane_status(self.active_canvas.active_view_plane)
+            self.cross_brace_dialog.update_plane_status(cvs.active_view_plane)
 
     def set_view_iso(self):
-        self.current_view_mode = "3D"
+        self._reset_plane_buttons()
+        self.active_canvas._view_mode = "3D"
         self.active_canvas.active_view_plane = None
-        self.active_canvas.set_standard_view("ISO") 
         if self.model: self.draw_both_canvases()
+        self.active_canvas.set_standard_view("ISO")
         self.status.showMessage("View: Orthogonal Isometric")
         if self.cross_brace_dialog:
             self.cross_brace_dialog.update_plane_status(None)
+
+        self.update_linked_planes()
 
     def on_new_model(self):
         dialog = NewModelDialog(self)
@@ -901,10 +986,10 @@ class MainWindow(QMainWindow):
                 try:
                     from core.properties import Material, RectangularSection, ISection
                     
-                    mat_conc = Material("C30", 3.2e7, 0.2, 24.0, "Concrete", 0.0, 0.0)
+                    mat_conc = Material("C30", 3.2e10, 0.2, 24000.0, "Concrete", 0.0, 0.0)
                     self.model.add_material(mat_conc)
 
-                    mat_steel = Material("S275", 2.0e8, 0.3, 78.5, "Steel", 275000.0, 430000.0)
+                    mat_steel = Material("S275", 2.0e11, 0.3, 78500.0, "Steel", 275e6, 430e6)
                     self.model.add_material(mat_steel)
 
                     default_color = (0.259, 0.110, 0.749, 1.0)
@@ -1026,8 +1111,6 @@ class MainWindow(QMainWindow):
                 
                 self.model.graphics_settings = model_graphics
                 self.model.save_to_file(filename)
-
-                self.model.save_to_file(filename)
                 self.model.file_path = filename
                 self.model.active_model_path = filename
                 
@@ -1057,36 +1140,6 @@ class MainWindow(QMainWindow):
         if not self.model: return
         dialog = LoadPatternDialog(self.model, self)
         dialog.exec()
-
-    def on_draw_frame(self):
-        if not self.model.sections:
-            QMessageBox.warning(self, "Error", "Define a Section Property first!")
-            return
-        self.draw_mode_active = True
-        self.canvas.snapping_enabled = True
-        self.draw_start_node = None
-        self.status.showMessage("Draw Mode: Select Start Point...")
-        
-        if self.draw_dialog is None:
-            self.draw_dialog = DrawFrameDialog(self.model, self)
-            self.draw_dialog.signal_dialog_closed.connect(self.on_draw_finished)
-        
-        self.draw_dialog.refresh_sections()
-        self.draw_dialog.show()
-
-    def on_draw_finished(self):
-        self.draw_mode_active = False
-        self.canvas.snapping_enabled = False 
-        self.draw_start_node = None
-        self.canvas.hide_preview_line()
-        self.canvas._draw_start = None
-        self.canvas.snap_ring.setVisible(False)
-        self.canvas.snap_dot.setVisible(False)
-        
-        self.status.showMessage("Ready")
-
-        if hasattr(self, 'act_select'):
-            self.act_select.setChecked(True)
 
     def _on_sidebar_select_mode(self):
         """Kills any active drawing modes and returns to pure selection state."""
@@ -1121,106 +1174,6 @@ class MainWindow(QMainWindow):
             if fwd or rev:
                 return True
         return False
-
-    def on_draw_cross_brace(self):
-        if not self.model.sections:
-            QMessageBox.warning(self, "Error", "Define a Section Property first!")
-            return
-        self.cross_brace_mode_active = True
-        self.canvas.cross_brace_mode = True
-        self.canvas.snapping_enabled = False
-        self.status.showMessage("Cross Brace Mode: Hover over a grid cell and click to place brace...")
-
-        if self.cross_brace_dialog is None:
-            self.cross_brace_dialog = DrawCrossBraceDialog(self.model, self)
-            self.cross_brace_dialog.signal_dialog_closed.connect(self.on_cross_brace_finished)
-
-        self.cross_brace_dialog.refresh_sections()
-        self.cross_brace_dialog.update_plane_status(self.canvas.active_view_plane)
-        self.cross_brace_dialog.show()
-
-    def on_cross_brace_finished(self):
-        self.cross_brace_mode_active = False
-        self.canvas.cross_brace_mode = False
-        self.canvas.snapping_enabled = False
-        self.canvas._brace_hover_cell = None
-        self.canvas._brace_prev_x1.setVisible(False)
-        self.canvas._brace_prev_x2.setVisible(False)
-        self.canvas._brace_prev_border.setVisible(False)
-        self.status.showMessage("Ready")
-        
-        if hasattr(self, 'act_select'):
-            self.act_select.setChecked(True)
-                                                                        
-    def on_draw_beam_column(self):
-        if not self.model.sections:
-            QMessageBox.warning(self, "Error", "Define a Section Property first!")
-            return
-
-        self.beam_col_mode_active = True
-        self.canvas.beam_col_mode  = True
-        self.canvas.snapping_enabled = False
-
-        if self.beam_col_dialog is None:
-            self.beam_col_dialog = DrawBeamColumnDialog(self.model, self)
-            self.beam_col_dialog.signal_dialog_closed.connect(self.on_beam_col_finished)
-            self.beam_col_dialog.signal_type_changed.connect(self._on_beam_col_type_changed)
-
-        self.beam_col_dialog.refresh_sections()
-        self._on_beam_col_type_changed(self.beam_col_dialog.get_member_type())
-        self.beam_col_dialog.show()
-
-    def _on_beam_col_type_changed(self, member_type):
-        self.canvas._beam_col_type = member_type
-        self.canvas._beam_col_hover_seg = None
-        self.canvas._beam_col_prev_line.setVisible(False)
-        if member_type == 'beam':
-            self.status.showMessage("Beam Mode: Hover over a horizontal grid line and click to place...")
-        else:
-            self.status.showMessage("Column Mode: Hover over a vertical grid line and click to place...")
-
-    def on_beam_col_finished(self):
-        self.beam_col_mode_active = False
-        self.canvas.beam_col_mode  = False
-        self.canvas.snapping_enabled = False
-        self.canvas._beam_col_hover_seg = None
-        self.canvas._beam_col_prev_line.setVisible(False)
-        self.status.showMessage("Ready")
-        
-        if hasattr(self, 'act_select'):
-            self.act_select.setChecked(True)
-
-    def _place_beam_column_at(self):
-        import numpy as np
-        seg = self.canvas._beam_col_hover_seg
-        if seg is None: return
-
-        section = self.beam_col_dialog.get_selected_section()
-        if not section: return
-
-        p1, p2 = seg
-        rel_i, rel_j  = self.beam_col_dialog.get_release_arrays()
-        member_type   = self.beam_col_dialog.get_member_type()
-        rotation      = self.beam_col_dialog.get_rotation_angle()
-        
-        if self._frame_exists_between(tuple(p1), tuple(p2)):
-            self.status.showMessage("⚠️ Cannot place element: an element already exists here.")
-            return
-
-        card_point = 10
-        no_trans = False
-        if member_type == 'beam' and self.beam_col_dialog.get_apply_offset():
-            card_point = 8             
-            no_trans = self.beam_col_dialog.get_no_transform()
-
-        label = "Draw Quick Beam" if member_type == 'beam' else "Draw Quick Column"
-        
-        cmd = CmdDrawFrame(self.model, self, tuple(p1), tuple(p2), section, 
-                           rel_i, rel_j, rotation, card_point, no_trans, description=label)
-        
-        self.add_command(cmd)
-        
-        self.status.showMessage(f"{label} placed. Click another segment or Esc to exit.")
 
     def _get_brace_cell_corners(self, x, y, z):
         """
@@ -1280,13 +1233,67 @@ class MainWindow(QMainWindow):
             ]
         return None
 
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            if self.draw_mode_active:
+                if self.draw_dialog:
+                    self.draw_dialog.hide()
+                self.on_draw_finished()
+            if self.cross_brace_mode_active:
+                if self.cross_brace_dialog:
+                    self.cross_brace_dialog.hide()
+                self.on_cross_brace_finished()
+            if self.beam_col_mode_active:
+                if self.beam_col_dialog:
+                    self.beam_col_dialog.hide()
+                self.on_beam_col_finished()
+            if hasattr(self, 'act_select'):
+                self.act_select.setChecked(True)                  
+
+        elif event.key() == Qt.Key.Key_Delete:
+            if getattr(self, 'is_locked', False):
+                self.status.showMessage("⚠️ Cannot delete objects while Analysis Results are active. Unlock model first.")
+                return
+            self.delete_current_selection()              
+
+        super().keyPressEvent(event)
+        
+    def _place_beam_column_at(self):
+        import numpy as np
+        seg = self.active_canvas._beam_col_hover_seg
+        if seg is None: return
+
+        section = self.beam_col_dialog.get_selected_section()
+        if not section: return
+
+        p1, p2 = seg
+        rel_i, rel_j  = self.beam_col_dialog.get_release_arrays()
+        member_type   = self.beam_col_dialog.get_member_type()
+        rotation      = self.beam_col_dialog.get_rotation_angle()
+        
+        if self._frame_exists_between(tuple(p1), tuple(p2)):
+            self.status.showMessage("⚠️ Cannot place element: an element already exists here.")
+            return
+
+        card_point = 10
+        no_trans = False
+        if member_type == 'beam' and self.beam_col_dialog.get_apply_offset():
+            card_point = 8             
+            no_trans = self.beam_col_dialog.get_no_transform()
+
+        label = "Draw Quick Beam" if member_type == 'beam' else "Draw Quick Column"
+        cmd = CmdDrawFrame(self.model, self, tuple(p1), tuple(p2), section, 
+                           rel_i, rel_j, rotation, card_point, no_trans, description=label)
+        self.add_command(cmd)
+        self.status.showMessage(f"{label} placed. Click another segment or Esc to exit.")
+
     def _draw_cross_brace_at(self, x, y, z):
         section = self.cross_brace_dialog.get_selected_section()
         if not section:
             self.status.showMessage("Error: No Section selected.")
             return
 
-        corners = self.canvas._brace_hover_cell
+        corners = self.active_canvas._brace_hover_cell
         if corners is None:
             self.status.showMessage("No grid cell detected — move mouse over a valid cell.")
             return
@@ -1335,27 +1342,26 @@ class MainWindow(QMainWindow):
                 self.replicate_p1 = (x, y, z)
                 self.status.showMessage("Replicate: Click Second Point...")
             else:
-                                 
                 x1, y1, z1 = self.replicate_p1
-                dx = x - x1
-                dy = y - y1
-                dz = z - z1
+                dx, dy, dz = x - x1, y - y1, z - z1
                 
                 self.picking_replicate = False
                 self.replicate_p1 = None
-                self.canvas.snapping_enabled = False                          
+                for cvs in [self.canvas, self.canvas2]:
+                    cvs.snapping_enabled = False                          
                 
                 if self.replicate_dialog:
                     self.replicate_dialog.set_increments(dx, dy, dz)
                 
                 self.status.showMessage("Replicate values set.")
             return                        
+        
         if not self.draw_mode_active: return
         clicked_node = self.model.get_or_create_node(x, y, z)
             
         if self.draw_start_node is None:
             self.draw_start_node = clicked_node
-            self.canvas._draw_start = (clicked_node.x, clicked_node.y, clicked_node.z)
+            self.active_canvas._draw_start = (clicked_node.x, clicked_node.y, clicked_node.z)
             self.status.showMessage(f"Start Node {clicked_node.id} Selected. Select End Point...")
         else:
             end_node = clicked_node
@@ -1366,7 +1372,6 @@ class MainWindow(QMainWindow):
                 return
             
             section = self.draw_dialog.get_selected_section()
-            
             rel_i, rel_j = self.draw_dialog.get_release_arrays()
             
             if section:
@@ -1381,47 +1386,22 @@ class MainWindow(QMainWindow):
                 self.add_command(cmd)
                 
                 self.draw_start_node = self.model.get_or_create_node(*p2)
-                self.canvas._draw_start = (self.draw_start_node.x, self.draw_start_node.y, self.draw_start_node.z)
+                self.active_canvas._draw_start = (self.draw_start_node.x, self.draw_start_node.y, self.draw_start_node.z)
                 
                 self.status.showMessage(f"Element Drawn. Next Start: Node {end_node.id}...")
-                print(f"> GUI: Added Frame with Section '{section.name}' to Node {end_node.id}")
             else:
                 self.status.showMessage("Error: No Section Selected")
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Escape:
-            if self.draw_mode_active:
-                if self.draw_dialog:
-                    self.draw_dialog.hide()
-                self.on_draw_finished()
-            if self.cross_brace_mode_active:
-                if self.cross_brace_dialog:
-                    self.cross_brace_dialog.hide()
-                self.on_cross_brace_finished()
-            if self.beam_col_mode_active:
-                if self.beam_col_dialog:
-                    self.beam_col_dialog.hide()
-                self.on_beam_col_finished()
-            if hasattr(self, 'act_select'):
-                self.act_select.setChecked(True)                  
-
-        elif event.key() == Qt.Key.Key_Delete:
-            if getattr(self, 'is_locked', False):
-                self.status.showMessage("⚠️ Cannot delete objects while Analysis Results are active. Unlock model first.")
-                return
-            self.delete_current_selection()              
-
-        super().keyPressEvent(event)
-        
+                
     def handle_right_click(self):
         if self.draw_mode_active:
-            self.canvas.hide_preview_line()
-            self.canvas._draw_start = None
+            for cvs in [self.canvas, self.canvas2]:
+                cvs.hide_preview_line()
+                cvs._draw_start = None
             if self.draw_start_node:
                 self.draw_start_node = None
                 self.status.showMessage("Chain Broken. Select a new Start Point...")
             return
-        
+
         menu = QMenu(self)
         hit_something = False 
 
@@ -1579,7 +1559,7 @@ class MainWindow(QMainWindow):
                     sel_diag = model_diag * 0.20
 
                 target        = QVector3D(cx, cy, cz)
-                target_dist   = max(sel_diag * 2.5, 0.05)
+                target_dist   = self.canvas._fit_distance(sel_diag, self.canvas.opts.get('fov', 60))
                 self.canvas.camera.animate_to(
                     target_center=target, target_dist=target_dist
                 )
@@ -1643,7 +1623,6 @@ class MainWindow(QMainWindow):
         msg = f"Deleted {len(final_elem_ids)} Frames and {len(final_node_ids)} Joints."
         self.status.showMessage(msg)
         print(f"> GUI: {msg}")
-        self.status.showMessage(f"Deleted {len(final_elem_ids)} Frames and {len(final_node_ids)} Joints.")
 
     def is_node_connected(self, node_id):
         """Helper to check if any element in the model uses this node."""
@@ -1713,31 +1692,31 @@ class MainWindow(QMainWindow):
         print(f"> GUI: Slab created using {len(selected_nodes)} selected nodes.")
 
     def on_view_options(self):
-        current_settings = {
-            'extrude': self.canvas.view_extruded,
-            'areas': self.canvas.show_slabs,
-            'joints': self.canvas.show_joints,
-            'supports': self.canvas.show_supports,
-            'constraints': self.canvas.show_constraints,
-            'releases': self.canvas.show_releases,
-            'loads': self.canvas.show_loads,
-            'axes': self.canvas.show_local_axes  
-        }
-        dialog = ViewOptionsDialog(self, current_settings)
-        dialog.exec()
+        if not hasattr(self, '_view_options_dialog') or self._view_options_dialog is None:
+            self._view_options_dialog = ViewOptionsDialog(self)
+            self._view_options_dialog.finished.connect(
+                lambda: setattr(self, '_view_options_dialog', None)
+            )
+        self._view_options_dialog._load_from_active_canvas()
+        self._view_options_dialog.show()
+        self._view_options_dialog.raise_()
+        self._view_options_dialog.activateWindow()
 
     def apply_view_options(self, settings):
-        self.canvas.view_extruded = settings.get('extrude', False)
-        self.canvas.show_slabs = settings.get('areas', True)
-        self.canvas.show_joints = settings.get('joints', True)
-        self.canvas.show_supports = settings.get('supports', True)
-        self.canvas.show_constraints = settings.get('constraints', True)
-        self.canvas.show_releases = settings.get('releases', True)
-        self.canvas.show_loads = settings.get('loads', True)
-        self.canvas.show_local_axes = settings.get('axes', False)
-        self.canvas.load_type_filter = settings.get('load_type', 'both')
-        self.canvas.visible_load_patterns = settings.get('visible_patterns', [])
-        
+        cvs = self.active_canvas
+        cvs.view_extruded        = settings.get('extrude', False)
+        cvs.show_slabs           = settings.get('areas', True)
+        cvs.show_grid            = settings.get('grid', True)
+        cvs.show_ghost_structure = settings.get('ghost', True)
+        cvs.show_joints          = settings.get('joints', True)
+        cvs.show_supports        = settings.get('supports', True)
+        cvs.show_constraints     = settings.get('constraints', True)
+        cvs.show_releases        = settings.get('releases', True)
+        cvs.show_loads           = settings.get('loads', True)
+        cvs.show_local_axes      = settings.get('axes', False)
+        cvs.load_type_filter     = settings.get('load_type', 'both')
+        cvs.visible_load_patterns = settings.get('visible_patterns', [])
+
         self.draw_both_canvases()
         self.status.showMessage(f"Display Options Updated")
 
@@ -1770,11 +1749,110 @@ class MainWindow(QMainWindow):
             
             self.status.showMessage("Replication Complete.")
             
+    def on_draw_frame(self):
+        if not self.model.sections:
+            QMessageBox.warning(self, "Error", "Define a Section Property first!")
+            return
+        self.draw_mode_active = True
+        for cvs in [self.canvas, self.canvas2]:
+            cvs.snapping_enabled = True
+        self.draw_start_node = None
+        self.status.showMessage("Draw Mode: Select Start Point...")
+        
+        if self.draw_dialog is None:
+            self.draw_dialog = DrawFrameDialog(self.model, self)
+            self.draw_dialog.signal_dialog_closed.connect(self.on_draw_finished)
+        
+        self.draw_dialog.refresh_sections()
+        self.draw_dialog.show()
+
+    def on_draw_finished(self):
+        self.draw_mode_active = False
+        self.draw_start_node = None
+        for cvs in [self.canvas, self.canvas2]:
+            cvs.snapping_enabled = False 
+            cvs.hide_preview_line()
+            cvs._draw_start = None
+            cvs.snap_ring.setVisible(False)
+            cvs.snap_dot.setVisible(False)
+        self.status.showMessage("Ready")
+        if hasattr(self, 'act_select'):
+            self.act_select.setChecked(True)
+
+    def on_draw_cross_brace(self):
+        if not self.model.sections:
+            QMessageBox.warning(self, "Error", "Define a Section Property first!")
+            return
+        self.cross_brace_mode_active = True
+        for cvs in [self.canvas, self.canvas2]:
+            cvs.cross_brace_mode = True
+            cvs.snapping_enabled = False
+        self.status.showMessage("Cross Brace Mode: Hover over a grid cell and click to place brace...")
+        if self.cross_brace_dialog is None:
+            self.cross_brace_dialog = DrawCrossBraceDialog(self.model, self)
+            self.cross_brace_dialog.signal_dialog_closed.connect(self.on_cross_brace_finished)
+        self.cross_brace_dialog.refresh_sections()
+        self.cross_brace_dialog.update_plane_status(self.active_canvas.active_view_plane)
+        self.cross_brace_dialog.show()
+
+    def on_cross_brace_finished(self):
+        self.cross_brace_mode_active = False
+        for cvs in [self.canvas, self.canvas2]:
+            cvs.cross_brace_mode = False
+            cvs.snapping_enabled = False
+            cvs._brace_hover_cell = None
+            cvs._brace_prev_x1.setVisible(False)
+            cvs._brace_prev_x2.setVisible(False)
+            cvs._brace_prev_border.setVisible(False)
+        self.status.showMessage("Ready")
+        if hasattr(self, 'act_select'):
+            self.act_select.setChecked(True)
+
+    def on_draw_beam_column(self):
+        if not self.model.sections:
+            QMessageBox.warning(self, "Error", "Define a Section Property first!")
+            return
+        self.beam_col_mode_active = True
+        for cvs in [self.canvas, self.canvas2]:
+            cvs.beam_col_mode = True
+            cvs.snapping_enabled = False
+
+        if self.beam_col_dialog is None:
+            self.beam_col_dialog = DrawBeamColumnDialog(self.model, self)
+            self.beam_col_dialog.signal_dialog_closed.connect(self.on_beam_col_finished)
+            self.beam_col_dialog.signal_type_changed.connect(self._on_beam_col_type_changed)
+
+        self.beam_col_dialog.refresh_sections()
+        self._on_beam_col_type_changed(self.beam_col_dialog.get_member_type())
+        self.beam_col_dialog.show()
+
+    def _on_beam_col_type_changed(self, member_type):
+        for cvs in [self.canvas, self.canvas2]:
+            cvs._beam_col_type = member_type
+            cvs._beam_col_hover_seg = None
+            cvs._beam_col_prev_line.setVisible(False)
+        if member_type == 'beam':
+            self.status.showMessage("Beam Mode: Hover over a horizontal grid line and click to place...")
+        else:
+            self.status.showMessage("Column Mode: Hover over a vertical grid line and click to place...")
+
+    def on_beam_col_finished(self):
+        self.beam_col_mode_active = False
+        for cvs in [self.canvas, self.canvas2]:
+            cvs.beam_col_mode  = False
+            cvs.snapping_enabled = False
+            cvs._beam_col_hover_seg = None
+            cvs._beam_col_prev_line.setVisible(False)
+        self.status.showMessage("Ready")
+        if hasattr(self, 'act_select'):
+            self.act_select.setChecked(True)
+
     def start_replicate_picking(self):
         """Called when user clicks 'Pick Two Points' in dialog"""
         self.picking_replicate = True
         self.replicate_p1 = None
-        self.canvas.snapping_enabled = True                
+        for cvs in [self.canvas, self.canvas2]:
+            cvs.snapping_enabled = True
         self.status.showMessage("Replicate: Click First Point...")
 
     def on_edit_merge(self):
@@ -1871,24 +1949,6 @@ class MainWindow(QMainWindow):
 
     def start_analysis_sequence(self, case_name):
 
-        current_path = getattr(self.model, 'file_path', None)
-
-        if not current_path:
-            QMessageBox.warning(self, "Save Required", "Please save the model file before running analysis.")
-            self.on_save_model()
-            
-            current_path = getattr(self.model, 'file_path', None)
-            if not current_path:
-                return                      
-
-        print(f"Main: Starting analysis for case '{case_name}'...")
-        """
-        1. Ensure File is Saved
-        2. Lock Interface
-        3. Determine Paths based on Filename
-        4. Run Solver Thread
-        """
-                                          
         if not hasattr(self.model, 'file_path') or not self.model.file_path:
             QMessageBox.warning(self, "Save Required", "Please save the model file before running analysis.")
             self.on_save_model()
@@ -1907,7 +1967,6 @@ class MainWindow(QMainWindow):
         case_obj = self.model.load_cases.get(case_name)
         c_type = case_obj.case_type if case_obj else "Linear Static"
 
-        self.solver_input_path = self.model.file_path
         base_name = os.path.splitext(self.solver_input_path)[0]
 
         if c_type == "Modal":
@@ -2311,14 +2370,15 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No Results", "Please run the analysis first.")
             return
 
+        cvs = self.active_canvas
         current_spd = 1.0
-        mgr = self.canvas.animation_manager if hasattr(self.canvas, 'animation_manager') else None
+        mgr = cvs.animation_manager if hasattr(cvs, 'animation_manager') else None
         if mgr:
             current_spd = mgr.speed_factor
 
-        is_ltha = getattr(self.canvas, 'ltha_mode', False)
-        n_steps = getattr(self.canvas, 'ltha_n_steps', 0)
-        ltha_dt = getattr(self.canvas, 'ltha_dt', 0.01)
+        is_ltha = getattr(cvs, 'ltha_mode', False)
+        n_steps = getattr(cvs, 'ltha_n_steps', 0)
+        ltha_dt = getattr(cvs, 'ltha_dt', 0.01)
 
         if hasattr(self, '_deformed_dlg') and self._deformed_dlg is not None:
             if self._deformed_dlg.isVisible():
@@ -2330,37 +2390,36 @@ class MainWindow(QMainWindow):
 
         self._deformed_dlg = DeformedShapeDialog(
             parent=self,
-            current_scale=self.canvas.deflection_scale,
-            auto_scale=getattr(self.canvas, 'auto_deflection_scale', 1.0),
-            is_active=self.canvas.view_deflected,
-            show_shadow=self.canvas.view_shadow,
-            shadow_color=self.canvas.shadow_color,
+            current_scale=cvs.deflection_scale,
+            auto_scale=getattr(cvs, 'auto_deflection_scale', 1.0),
+            is_active=cvs.view_deflected,
+            show_shadow=cvs.view_shadow,
+            shadow_color=cvs.shadow_color,
             is_animating=mgr.is_running if mgr else False,
             current_speed=current_spd,
             ltha_mode=is_ltha,
             ltha_n_steps=n_steps,
             ltha_dt=ltha_dt
         )
-        
+
         self._deformed_dlg.setWindowModality(Qt.WindowModality.NonModal)
         self._deformed_dlg.show()
 
     def apply_deformed_shape(self, is_visible, scale_factor, show_shadow, shadow_color):
-        """Callback from the Dialog to update the canvas."""
-        
-        for cvs in [self.canvas, self.canvas2]:
-            cvs.view_deflected = is_visible
-            
-            if cvs.deflection_scale != scale_factor:
-                cvs.deflection_scale = scale_factor
-                if hasattr(cvs, 'animation_manager'):
-                    cvs.animation_manager.invalidate_prerender()
-            
-            cvs.view_shadow = show_shadow
-            cvs.shadow_color = shadow_color
-            
+        """Callback from the Dialog to update the active canvas."""
+        cvs = self.active_canvas
+        cvs.view_deflected = is_visible
+
+        if cvs.deflection_scale != scale_factor:
+            cvs.deflection_scale = scale_factor
+            if hasattr(cvs, 'animation_manager'):
+                cvs.animation_manager.invalidate_prerender()
+
+        cvs.view_shadow = show_shadow
+        cvs.shadow_color = shadow_color
+
         self.draw_both_canvases()
-        
+
         state_msg = "ON" if is_visible else "OFF"
         self.status.showMessage(f"Deformed Shape: {state_msg} (Scale: {scale_factor}x)")
 
@@ -2723,17 +2782,16 @@ class MainWindow(QMainWindow):
         self.status.showMessage(f"Saved via terminal: {model.file_path}")
 
     def _toolbar_toggle_deform(self, checked):
-        """Directly toggles the deformed shape on the canvas without opening the dialog."""
+        """Directly toggles the deformed shape on the active canvas without opening the dialog."""
         if not self.model or not self.model.has_results:
             return
-        
-        for cvs in [self.canvas, self.canvas2]:
-            cvs.view_deflected = checked
-            
+
+        self.active_canvas.view_deflected = checked
+
         self.draw_both_canvases()
-        
+
         state_msg = "ON" if checked else "OFF"
-        self.status.showMessage(f"Deformed Shape: {state_msg} (Scale: {self.canvas.deflection_scale:.2f}x)")
+        self.status.showMessage(f"Deformed Shape: {state_msg} (Scale: {self.active_canvas.deflection_scale:.2f}x)")
 
     def _toggle_pan(self, checked):
         if checked:
@@ -2767,14 +2825,34 @@ class MainWindow(QMainWindow):
         self.canvas.visible_load_patterns = gs.get('visible_load_patterns', [])
 
     def _update_active_border(self):
-        active_style   = "QFrame { border: 2px solid #0078d7; }"
-        inactive_style = "QFrame { border: 2px solid #cccccc; }"
-        self.canvas_frame1.setStyleSheet(active_style if self.active_canvas == self.canvas else inactive_style)
-        self.canvas_frame2.setStyleSheet(active_style if self.active_canvas == self.canvas2 else inactive_style)
+                                               
+        if self.canvas2_visible:
+                                                         
+            active_style   = "QFrame { border: 1px solid #0078d7; }"
+            inactive_style = "QFrame { border: 1px solid #cccccc; }"
+            self.canvas_frame1.setStyleSheet(active_style if self.active_canvas == self.canvas else inactive_style)
+            self.canvas_frame2.setStyleSheet(active_style if self.active_canvas == self.canvas2 else inactive_style)
+        else:
+                                                                
+            no_border_style = "QFrame { border: none; }"
+            self.canvas_frame1.setStyleSheet(no_border_style)
+            self.canvas_frame2.setStyleSheet(no_border_style)
 
     def _set_active_canvas(self, canvas):
         self.active_canvas = canvas
         self._update_active_border()
+                                                                                  
+        vm = canvas._view_mode
+        self.btn_xy.setChecked(vm == "XY")
+        self.btn_xz.setChecked(vm == "XZ")
+        self.btn_yz.setChecked(vm == "YZ")
+        
+        if getattr(self, 'cross_brace_mode_active', False) and self.cross_brace_dialog and self.cross_brace_dialog.isVisible():
+            self.cross_brace_dialog.update_plane_status(canvas.active_view_plane)
+            
+        dlg = getattr(self, '_view_options_dialog', None)
+        if dlg and dlg.isVisible():
+            dlg._update_target_label()
 
     def eventFilter(self, obj, event):
         from PyQt6.QtCore import QEvent
@@ -2800,11 +2878,17 @@ class MainWindow(QMainWindow):
                 self.canvas2.draw_model(self.model,
                                         list(self.selected_ids),
                                         list(self.selected_node_ids))
-                                                                        
-            QTimer.singleShot(50, lambda: self.canvas2.set_standard_view("ISO"))
+            
+            def init_canvas2():
+                self.canvas2.set_standard_view("ISO")
+                self.update_linked_planes()                           
+
+            QTimer.singleShot(50, init_canvas2)
+                                                                            
+            self._update_active_border()
         else:
-                                                                
             self._set_active_canvas(self.canvas)
+            self.update_linked_planes()                           
 
     def on_check_updates(self):
         """Opens the Check for Updates dialog."""
@@ -2813,6 +2897,29 @@ class MainWindow(QMainWindow):
             self.update_dlg.show()
         else:
             self.update_dlg.raise_()
+
+    def update_linked_planes(self):
+        """
+        Synchronize helper planes between dual viewports.
+        """
+        if not self.canvas2_visible:
+            self.canvas.clear_linked_view_plane()
+            self.canvas2.clear_linked_view_plane()
+            return
+
+        c1_is_3d = (self.canvas._view_mode in ["3D", "ISO"])
+        c2_is_3d = (self.canvas2._view_mode in ["3D", "ISO"])
+
+        if c1_is_3d and not c2_is_3d:
+            self.canvas.update_linked_view_plane(self.canvas2.active_view_plane)
+            self.canvas2.clear_linked_view_plane()
+        elif c2_is_3d and not c1_is_3d:
+            self.canvas2.update_linked_view_plane(self.canvas.active_view_plane)
+            self.canvas.clear_linked_view_plane()
+        else:
+            self.canvas.clear_linked_view_plane()
+            self.canvas2.clear_linked_view_plane()
+            
 def main():
     if sys.platform == 'win32':
         myappid = 'metu.civil.OPENCIVIL.v03'
@@ -2821,6 +2928,9 @@ def main():
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
     app = QApplication(sys.argv)
+
+    animator = GlobalDialogAnimator(app)
+    app.installEventFilter(animator)
 
     ipc = IPCManager()
     is_secondary = ipc.connect_to_primary()
@@ -2967,7 +3077,12 @@ def main():
     ipc.raise_requested.connect(lambda: (window.showNormal(), window.raise_(), window.activateWindow()))
     
     def on_splash_finished():
+                                                                  
+        if hasattr(splash, 'cleanup_player'):
+            splash.cleanup_player()
+            
         splash.close()
+        splash.deleteLater()
 
         auth_manager = GoogleAuthManager()
         if not auth_manager.login(parent=None):

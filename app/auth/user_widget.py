@@ -10,7 +10,8 @@ import tempfile
 
 from PyQt6.QtCore import (
     Qt, QTimer, QPoint, QRect,
-    pyqtSignal, QThread, pyqtSignal as Signal
+    pyqtSignal, QThread, pyqtSignal as Signal,
+    QPropertyAnimation, QEasingCurve, QParallelAnimationGroup
 )
 from PyQt6.QtGui import (
     QFont, QColor, QPainter, QPainterPath,
@@ -119,27 +120,22 @@ class UserDropdown(QWidget):
         self._build_ui()
         self._apply_shadow()
 
-    def paintEvent(self, _event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        path = QPainterPath()
-        path.addRoundedRect(1, 1, self.width() - 2, self.height() - 2, 12, 12)
-
-        p.setClipPath(path)
-        p.fillRect(self.rect(), QColor(255, 255, 255, 255))
-        p.setClipping(False)
-
-        pen = QPen(QColor(0, 0, 0, 18))
-        pen.setWidthF(1.0)
-        p.setPen(pen)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawPath(path)
-        p.end()
-
     def _build_ui(self):
-        self.setFixedWidth(DROPDOWN_W)
-        root = QVBoxLayout(self)
+                                                                                     
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(24, 24, 24, 24) 
+        main_layout.setSpacing(0)
+
+        self.container = QWidget()
+        self.container.setFixedWidth(DROPDOWN_W)
+        self.container.setStyleSheet("""
+            QWidget {
+                background-color: white;
+                border-radius: 12px;
+            }
+        """)
+
+        root = QVBoxLayout(self.container)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
@@ -190,6 +186,8 @@ class UserDropdown(QWidget):
         m.addWidget(btn_signout)
 
         root.addWidget(menu)
+        
+        main_layout.addWidget(self.container)
         self.adjustSize()
 
     def _divider(self):
@@ -226,7 +224,8 @@ class UserDropdown(QWidget):
         s.setBlurRadius(24)
         s.setOffset(0, 6)
         s.setColor(QColor(0, 0, 0, 55))
-        self.setGraphicsEffect(s)
+                                                                          
+        self.container.setGraphicsEffect(s)
 
     def set_avatar_pixmap(self, pixmap: QPixmap):
         self.avatar_big.set_pixmap(pixmap)
@@ -266,7 +265,8 @@ class UserProfileWidget(QWidget):
         """)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 5, 14, 5)
+                                                                                   
+        layout.setContentsMargins(4, 3, 14, 3)
         layout.setSpacing(9)
 
         self.avatar = AvatarLabel(size=AVATAR_SIZE, parent=self)
@@ -331,8 +331,9 @@ class UserProfileWidget(QWidget):
         win = self.window()
         if hasattr(win, 'toolbar'):
             tb = win.toolbar
+                                                                           
             tb_pos = tb.mapTo(p, QPoint(0, 0))
-            y = tb_pos.y() + (tb.height() - self.height()) // 2 - 4
+            y = tb_pos.y() + (tb.height() - self.height()) // 2 
         else:
             y = 7 
 
@@ -355,10 +356,34 @@ class UserProfileWidget(QWidget):
                 self._dropdown.set_avatar_pixmap(self._avatar_pixmap)
 
         pos  = self.mapTo(self.window(), QPoint(0, self.height() + 8))
-        dx   = pos.x() + self.width() - DROPDOWN_W
-        self._dropdown.move(dx, pos.y())
+        dx   = pos.x() + self.width() - DROPDOWN_W - 24
+        
+        start_y = pos.y() - 15                         
+        end_y = pos.y()                                  
+
+        self._dropdown.move(dx, start_y)
+        self._dropdown.setWindowOpacity(0.0)                          
         self._dropdown.show()
         self._dropdown.raise_()
+
+        self.anim_group = QParallelAnimationGroup(self)
+
+        fade_anim = QPropertyAnimation(self._dropdown, b"windowOpacity")
+        fade_anim.setDuration(250)              
+        fade_anim.setStartValue(0.0)
+        fade_anim.setEndValue(1.0)
+        fade_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+
+        move_anim = QPropertyAnimation(self._dropdown, b"pos")
+        move_anim.setDuration(250)
+        move_anim.setStartValue(QPoint(dx, start_y))
+        move_anim.setEndValue(QPoint(dx, end_y))
+        move_anim.setEasingCurve(QEasingCurve.Type.OutBack)                      
+
+        self.anim_group.addAnimation(fade_anim)
+        self.anim_group.addAnimation(move_anim)
+        self.anim_group.start()
+
         self.lbl_chevron.setText("▴")
 
     def _on_logout(self):

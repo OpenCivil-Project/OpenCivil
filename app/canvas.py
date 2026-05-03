@@ -35,7 +35,7 @@ class MCanvas3D(gl.GLViewWidget):
             "slab_opacity": 0.4
         }
         self.view_cube = ViewCube()
-        self.opts['distance']  = 40
+        self.opts['distance']  = 10                                                       
         self.opts['elevation'] = 30
         self.opts['azimuth']   = 45
         self.opts['fov']       = 60
@@ -64,6 +64,12 @@ class MCanvas3D(gl.GLViewWidget):
         self.view_shadow = True
         self.shadow_color = (0.7, 0.7, 0.7, 0.5)
         self.show_grid = True
+
+        self.show_ghost_structure = True                       
+
+        self._plane_state = 0
+        self._view_mode = "3D"
+        self._grid_index = 0
 
         self.current_hover_data = None
         self.hovered_node_id = None
@@ -107,6 +113,9 @@ class MCanvas3D(gl.GLViewWidget):
         self.last_selection_state = {'nodes': [], 'elements': [], 'blink': True}
 
         self.active_view_plane = None 
+
+        self.linked_plane_item = None
+        self.linked_plane_outline = None
 
         self.drag_start = None
         self.drag_current = None
@@ -250,15 +259,30 @@ class MCanvas3D(gl.GLViewWidget):
             'span': (dx, dy, dz),
         }
 
+    @staticmethod
+    def _fit_distance(diagonal: float, fov: float) -> float:
+        """
+        Compute the camera distance that fits a bounding sphere exactly inside the viewport.
+        """
+                                                                         
+        if fov == 0:
+                                                                              
+            return diagonal * 0.9 
+            
+        radius = diagonal / 2.0
+        base_dist = (radius / math.tan(math.radians(fov) / 2.0))
+        
+        return base_dist * 1.8
+    
     def set_standard_view(self, view_name):
-                                              
+                                                                               
         target_center, diagonal, bounds = self.compute_model_bbox()
+
         if bounds:
-            max_dim = max(diagonal * 1.5, 0.1)
+                                                                              
+            self.camera.set_model_scale(diagonal)
         else:
-                                                                                        
-            max_dim = 40
-            mid_x = mid_y = mid_z = 0.0
+                                                                            
             if self.current_model and self.current_model.grid:
                 gx = self.current_model.grid.x_grids
                 gy = self.current_model.grid.y_grids
@@ -267,35 +291,41 @@ class MCanvas3D(gl.GLViewWidget):
                     mid_x = (min(gx) + max(gx)) / 2.0
                     mid_y = (min(gy) + max(gy)) / 2.0
                     mid_z = (min(gz) + max(gz)) / 2.0
-                    max_dim = max(max(gx)-min(gx), max(gy)-min(gy), max(gz)-min(gz)) * 1.5
-            target_center = QVector3D(mid_x, mid_y, mid_z)
-        target_dist = max_dim
-        
-        t_az, t_el, t_fov = -45, 30, 60
+                    spans = [max(gx)-min(gx), max(gy)-min(gy), max(gz)-min(gz)]
+                    diagonal = max(math.sqrt(sum(s*s for s in spans)), 0.1)
+                    target_center = QVector3D(mid_x, mid_y, mid_z)
+                    self.camera.set_model_scale(diagonal)
 
+        if view_name in ["XY", "XZ", "YZ"] and self.active_view_plane:
+            val = self.active_view_plane['value']
+            axis = self.active_view_plane['axis']
+            if axis == 'x': target_center.setX(val)
+            elif axis == 'y': target_center.setY(val)
+            elif axis == 'z': target_center.setZ(val)
+
+        self._view_mode = view_name
+        
         if view_name == "ISO":
             t_az, t_el, t_fov = -135, 35.264, 1
-            fov_scale = math.tan(math.radians(30)) / math.tan(math.radians(t_fov / 2))
-            target_dist = max_dim * 1.5 * fov_scale
-        elif view_name == "3D": t_az, t_el, t_fov = -135, 30, 60
-        elif view_name == "XY": t_az, t_el, t_fov = -90, 90, 0; target_dist = max_dim * 1.5
-        elif view_name == "XZ": t_az, t_el, t_fov = -90, 0, 0; target_dist = max_dim * 1.5
-        elif view_name == "YZ": t_az, t_el, t_fov = 180, 0, 0; target_dist = max_dim * 1.5
-
-        if t_fov == 0:
-
-            self.opts['fov'] = 60
-            try: self.camera.anim.finished.disconnect()
-            except: pass
-            def _apply_ortho():
-                self.opts['fov'] = 0.0
-                self.update()
-            self.camera.anim.finished.connect(_apply_ortho)
+        elif view_name == "3D":
+            t_az, t_el, t_fov = -135, 30, 60
+        elif view_name == "XY":
+            t_az, t_el, t_fov = -90, 90, 1                                               
+        elif view_name == "XZ":
+            t_az, t_el, t_fov = -90, 0, 1                
+        elif view_name == "YZ":
+            t_az, t_el, t_fov = 180, 0, 1                
         else:
-            try: self.camera.anim.finished.disconnect()
-            except: pass
-            self.opts['fov'] = t_fov
+            t_az, t_el, t_fov = -135, 30, 60
 
+        target_dist = self._fit_distance(diagonal, t_fov)
+
+        self.opts['fov'] = t_fov
+        try:
+            self.camera.anim.finished.disconnect()
+        except:
+            pass
+            
         self.camera.animate_to(target_center, target_dist, t_az, t_el)
 
     def draw_model(self, model, sel_elems=None, sel_nodes=None):
@@ -389,13 +419,15 @@ class MCanvas3D(gl.GLViewWidget):
         self._rebuild_selection_overlay()
 
         if model.nodes:
+                                                                             
             center, diag, _ = self.compute_model_bbox(model)
-            self.opts['center'] = center                                                      
+            
             self.camera.set_model_scale(max(diag, 0.001))
-                                                                                  
-            current_dist = self.opts.get('distance', 40)
-            needed_dist  = max(diag * 1.5, 0.1)
-            if needed_dist > current_dist * 2.0:
+            
+            current_dist = self.opts.get('distance', 0)
+            if current_dist <= 0:
+                needed_dist = self._fit_distance(diag, self.opts.get('fov', 60))
+                self.opts['center'] = center
                 self.camera.animate_to(target_center=center, target_dist=needed_dist)
 
     def update_selection_overlay(self, sel_elems, sel_nodes):
@@ -454,6 +486,10 @@ class MCanvas3D(gl.GLViewWidget):
                     continue
                 el = model.elements[eid]
                 n1, n2 = el.node_i, el.node_j
+
+                if min(self._get_visibility_state(n1.x, n1.y, n1.z), self._get_visibility_state(n2.x, n2.y, n2.z)) != 2:
+                    continue
+
                 p1 = np.array([n1.x, n1.y, n1.z])
                 p2 = np.array([n2.x, n2.y, n2.z])
                 
@@ -478,17 +514,38 @@ class MCanvas3D(gl.GLViewWidget):
                     curve_data_full = cached['curve_data']
                     p1_orig = cached['p1_orig']
                     p2_orig = cached['p2_orig']
-                    for k in range(len(curve_data_full) - 1):
-                        pos_full,  _, _ = curve_data_full[k]
-                        pos_full_next, _, _ = curve_data_full[k + 1]
-                        s      = k       / (len(curve_data_full) - 1)
-                        s_next = (k + 1) / (len(curve_data_full) - 1)
-                        pos_orig      = p1_orig + s      * (p2_orig - p1_orig)
-                        pos_orig_next = p1_orig + s_next * (p2_orig - p1_orig)
-                        p_start = pos_orig      + (pos_full      - pos_orig)      * self.anim_factor
-                        p_end   = pos_orig_next + (pos_full_next - pos_orig_next) * self.anim_factor
-                        curved_pos.extend([p_start, p_end])
-                        curved_colors.extend([sel_color, sel_color])
+                                                                      
+                    curve_pts = []
+                    for k in range(len(curve_data_full)):
+                        pos_full, _, _ = curve_data_full[k]
+                        s = k / (len(curve_data_full) - 1) if len(curve_data_full) > 1 else 0.0
+                        pos_orig = p1_orig + s * (p2_orig - p1_orig)
+                        curve_pts.append(pos_orig + (pos_full - pos_orig) * self.anim_factor)
+                                                                                         
+                    dash, gap = 0.4, 0.25
+                    dist_accum, on = 0.0, True
+                    for k in range(len(curve_pts) - 1):
+                        seg_start = curve_pts[k]
+                        seg_end   = curve_pts[k + 1]
+                        seg_vec   = seg_end - seg_start
+                        seg_len   = np.linalg.norm(seg_vec)
+                        if seg_len < 1e-6:
+                            continue
+                        seg_u = seg_vec / seg_len
+                        walked = 0.0
+                        while walked < seg_len:
+                            interval = dash if on else gap
+                            remaining_in_interval = interval - dist_accum
+                            can_walk = min(remaining_in_interval, seg_len - walked)
+                            if on:
+                                curved_pos.extend([seg_start + seg_u * walked,
+                                                   seg_start + seg_u * (walked + can_walk)])
+                                curved_colors.extend([sel_color, sel_color])
+                            walked += can_walk
+                            dist_accum += can_walk
+                            if dist_accum >= interval:
+                                dist_accum = 0.0
+                                on = not on
                 else:
                     curved_pos.extend([p1, p2])
                     curved_colors.extend([sel_color, sel_color])
@@ -496,7 +553,7 @@ class MCanvas3D(gl.GLViewWidget):
             if curved_pos:
                 item = gl.GLLinePlotItem(
                     pos=np.array(curved_pos), color=np.array(curved_colors),
-                    mode='lines', width=width + 2, antialias=True
+                    mode='lines', width=2.0, antialias=True
                 )
                 item.setGLOptions({
                     'glEnable': (GL_BLEND,),
@@ -515,6 +572,10 @@ class MCanvas3D(gl.GLViewWidget):
                 continue
             el = model.elements[eid]
             n1, n2 = el.node_i, el.node_j
+
+            if min(self._get_visibility_state(n1.x, n1.y, n1.z), self._get_visibility_state(n2.x, n2.y, n2.z)) != 2:
+                continue
+
             p1 = np.array([n1.x, n1.y, n1.z])
             p2 = np.array([n2.x, n2.y, n2.z])
             off_i = getattr(el, 'end_offset_i', 0.0)
@@ -536,10 +597,28 @@ class MCanvas3D(gl.GLViewWidget):
             sel_colors.extend([sel_color, sel_color]) 
             
         if sel_pos:
+                                                        
+            dash_pos, dash_colors = [], []
+            for k in range(0, len(sel_pos) - 1, 2):
+                p1_d = np.array(sel_pos[k])
+                p2_d = np.array(sel_pos[k + 1])
+                vec = p2_d - p1_d
+                seg_len = np.linalg.norm(vec)
+                if seg_len < 1e-6:
+                    continue
+                u = vec / seg_len
+                pos_d, on = 0.0, True
+                dash, gap = 0.4, 0.25
+                while pos_d < seg_len:
+                    end_d = min(pos_d + (dash if on else gap), seg_len)
+                    if on:
+                        dash_pos.extend([p1_d + u * pos_d, p1_d + u * end_d])
+                        dash_colors.extend([sel_color, sel_color])
+                    pos_d, on = end_d, not on
             item = gl.GLLinePlotItem(
-                pos=np.array(sel_pos), 
-                color=np.array(sel_colors), 
-                mode='lines', width=width + 1, antialias=True
+                pos=np.array(dash_pos) if dash_pos else np.array(sel_pos), 
+                color=np.array(dash_colors) if dash_colors else np.array(sel_colors), 
+                mode='lines', width=1.5, antialias=True
             )
             item.setGLOptions({
                 'glEnable': (GL_BLEND,),
@@ -559,22 +638,27 @@ class MCanvas3D(gl.GLViewWidget):
                        model.has_results and
                        model.results is not None)
 
-        lines = []
-        colors = []
+        dash_lines = []
+        dash_colors_ext = []
+        dash, gap = 0.4, 0.25
+
         for eid in self.selected_element_ids:
             if eid not in model.elements:
                 continue
             el = model.elements[eid]
             n1, n2 = el.node_i, el.node_j
+
+            if min(self._get_visibility_state(n1.x, n1.y, n1.z), self._get_visibility_state(n2.x, n2.y, n2.z)) != 2:
+                continue
+
             p1 = np.array([n1.x, n1.y, n1.z])
             p2 = np.array([n2.x, n2.y, n2.z])
 
             if can_deflect:
                 res_i = model.results.get("displacements", {}).get(str(n1.id))
                 res_j = model.results.get("displacements", {}).get(str(n2.id))
-                
-                if res_i and res_j:
 
+                if res_i and res_j:
                     if eid not in self.deflection_cache:
                         v1_orig, v2_orig, v3_orig = self._get_consistent_axes(el)
                         curve_data = get_deflected_shape(
@@ -587,39 +671,67 @@ class MCanvas3D(gl.GLViewWidget):
                             'p1_orig': p1.copy(),
                             'p2_orig': p2.copy()
                         }
-                        
+
                     cached = self.deflection_cache[eid]
                     curve_data_full = cached['curve_data']
                     p1_orig = cached['p1_orig']
                     p2_orig = cached['p2_orig']
-                    
-                    for k in range(len(curve_data_full) - 1):
+
+                    curve_pts = []
+                    for k in range(len(curve_data_full)):
                         pos_full, _, _ = curve_data_full[k]
-                        pos_full_next, _, _ = curve_data_full[k + 1]
-                        s = k / (len(curve_data_full) - 1)
-                        s_next = (k + 1) / (len(curve_data_full) - 1)
+                        s = k / (len(curve_data_full) - 1) if len(curve_data_full) > 1 else 0.0
                         pos_orig = p1_orig + s * (p2_orig - p1_orig)
-                        pos_orig_next = p1_orig + s_next * (p2_orig - p1_orig)
-                        p_start = pos_orig + (pos_full - pos_orig) * self.anim_factor
-                        p_end = pos_orig_next + (pos_full_next - pos_orig_next) * self.anim_factor
-                        lines.extend([p_start, p_end])
-                        colors.extend([color_sel, color_sel])
-                    continue                                    
-                                                  
-                res_i = model.results.get("displacements", {}).get(str(n1.id))
-                res_j = model.results.get("displacements", {}).get(str(n2.id))
+                        curve_pts.append(pos_orig + (pos_full - pos_orig) * self.anim_factor)
+
+                    dist_accum, on = 0.0, True
+                    for k in range(len(curve_pts) - 1):
+                        seg_start = curve_pts[k]
+                        seg_end   = curve_pts[k + 1]
+                        seg_vec   = seg_end - seg_start
+                        seg_len   = np.linalg.norm(seg_vec)
+                        if seg_len < 1e-6:
+                            continue
+                        seg_u = seg_vec / seg_len
+                        walked = 0.0
+                        while walked < seg_len:
+                            interval = dash if on else gap
+                            remaining = interval - dist_accum
+                            can_walk = min(remaining, seg_len - walked)
+                            if on:
+                                dash_lines.extend([seg_start + seg_u * walked,
+                                                   seg_start + seg_u * (walked + can_walk)])
+                                dash_colors_ext.extend([color_sel, color_sel])
+                            walked += can_walk
+                            dist_accum += can_walk
+                            if dist_accum >= interval:
+                                dist_accum = 0.0
+                                on = not on
+                    continue
+
                 if res_i:
                     p1 = p1 + np.array(res_i[:3]) * self.deflection_scale * self.anim_factor
                 if res_j:
                     p2 = p2 + np.array(res_j[:3]) * self.deflection_scale * self.anim_factor
 
-            lines.extend([p1, p2])
-            colors.extend([color_sel, color_sel])
+            vec = p2 - p1
+            seg_len = np.linalg.norm(vec)
+            if seg_len < 1e-6:
+                continue
+            u = vec / seg_len
+            pos_d, on = 0.0, True
+            while pos_d < seg_len:
+                end_d = min(pos_d + (dash if on else gap), seg_len)
+                if on:
+                    dash_lines.extend([p1 + u * pos_d, p1 + u * end_d])
+                    dash_colors_ext.extend([color_sel, color_sel])
+                pos_d, on = end_d, not on
 
-        if lines:
+        if dash_lines:
             cl = gl.GLLinePlotItem(
-                pos=np.array(lines), color=np.array(colors),
-                mode='lines', width=5.0, antialias=True
+                pos=np.array(dash_lines),
+                color=np.array(dash_colors_ext),
+                mode='lines', width=2.5, antialias=True
             )
             cl.setGLOptions({
                 'glEnable': (GL_BLEND,),
@@ -646,6 +758,10 @@ class MCanvas3D(gl.GLViewWidget):
             if nid not in model.nodes:
                 continue
             n = model.nodes[nid]
+
+            if self._get_visibility_state(n.x, n.y, n.z) != 2:
+                continue
+
             nx, ny, nz = n.x, n.y, n.z
             if can_deflect:
                 disp = model.results.get("displacements", {}).get(str(nid))
@@ -698,10 +814,10 @@ class MCanvas3D(gl.GLViewWidget):
 
             xyz = [nx, ny, nz]
             
-            v_state = self._get_visibility_state(n.x, n.y, n.z)             
-    
-            if v_state == 1:             
-                ghost_pos.append(xyz)
+            v_state = self._get_visibility_state(n.x, n.y, n.z)
+            if v_state < 2:
+                if v_state == 1:                                
+                    ghost_pos.append(xyz)
                 continue                                      
 
             is_active = self._is_visible(n.x, n.y, n.z)
@@ -756,7 +872,126 @@ class MCanvas3D(gl.GLViewWidget):
         
         state = self._get_visibility_state(x, y, z)
         return state >= 1                                                    
-    
+ 
+    def clear_linked_view_plane(self):
+        """Remove linked viewport helper plane."""
+
+        if self.linked_plane_item:
+            try:
+                self.removeItem(self.linked_plane_item)
+            except:
+                pass
+            self.linked_plane_item = None
+
+        if self.linked_plane_outline:
+            try:
+                self.removeItem(self.linked_plane_outline)
+            except:
+                pass
+            self.linked_plane_outline = None
+
+    def update_linked_view_plane(self, plane_data):
+        """
+        Draw translucent helper plane representing
+        the other viewport's active 2D plane.
+        """
+
+        self.clear_linked_view_plane()
+
+        if not plane_data:
+            return
+
+        if self._view_mode not in ["3D", "ISO"]:
+            return
+
+        if not self.current_model:
+            return
+
+        center, diag, bounds = self.compute_model_bbox()
+
+        if not bounds:
+            return
+
+        pad = diag * 0.10
+
+        min_x, min_y, min_z = bounds['min']
+        max_x, max_y, max_z = bounds['max']
+        
+        min_x -= pad; max_x += pad
+        min_y -= pad; max_y += pad
+        min_z -= pad; max_z += pad
+
+        axis = plane_data.get('axis')
+        value = plane_data.get('value')
+
+        if axis == 'z':
+            corners = np.array([
+                [min_x, min_y, value],
+                [max_x, min_y, value],
+                [max_x, max_y, value],
+                [min_x, max_y, value]
+            ], dtype=np.float32)
+
+        elif axis == 'y':
+            corners = np.array([
+                [min_x, value, min_z],
+                [max_x, value, min_z],
+                [max_x, value, max_z],
+                [min_x, value, max_z]
+            ], dtype=np.float32)
+
+        elif axis == 'x':
+            corners = np.array([
+                [value, min_y, min_z],
+                [value, max_y, min_z],
+                [value, max_y, max_z],
+                [value, min_y, max_z]
+            ], dtype=np.float32)
+
+        else:
+            return
+
+        faces = np.array([
+            [0, 1, 2],
+            [0, 2, 3]
+        ])
+
+        mesh = gl.GLMeshItem(
+            vertexes=corners,
+            faces=faces,
+            smooth=False,
+            drawEdges=False,
+            color=(0.2, 0.6, 1.0, 0.0)                       
+        )
+
+        mesh.setGLOptions({
+            'glEnable': (GL_BLEND,),
+            'glBlendFunc': (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA),
+            'glDisable': (GL_DEPTH_TEST,)
+        })
+
+        outline_pts = np.vstack([corners, corners[0]])
+
+        outline = gl.GLLinePlotItem(
+            pos=outline_pts,
+            mode='line_strip',
+            color=(0.2, 0.6, 1.0, 1.0),
+            width=1.0,                        
+            antialias=True
+        )
+
+        outline.setGLOptions({
+            'glEnable': (GL_BLEND,),
+            'glBlendFunc': (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA),
+            'glDisable': (GL_DEPTH_TEST,)
+        })
+
+        self.addItem(mesh)
+        self.addItem(outline)
+
+        self.linked_plane_item = mesh
+        self.linked_plane_outline = outline
+        
     def _draw_elements_wireframe(self, model):
         if not model.elements: return
 
@@ -782,9 +1017,17 @@ class MCanvas3D(gl.GLViewWidget):
             v1 = self._get_visibility_state(n1.x, n1.y, n1.z)
             v2 = self._get_visibility_state(n2.x, n2.y, n2.z)
 
-            if v1 == 1 and v2 == 1:
-                ghost_pos.extend([np.array([n1.x, n1.y, n1.z]), np.array([n2.x, n2.y, n2.z])])
+            if v1 == 0 or v2 == 0:
+                continue                               
+
+            is_active_elem = (v1 == 2 and v2 == 2)
+
+            if not is_active_elem:
+                p1 = np.array([n1.x, n1.y, n1.z])
+                p2 = np.array([n2.x, n2.y, n2.z])
+                ghost_pos.extend([p1, p2])
                 continue
+                
             p1 = np.array([n1.x, n1.y, n1.z])
             p2 = np.array([n2.x, n2.y, n2.z])
                              
@@ -1297,24 +1540,20 @@ class MCanvas3D(gl.GLViewWidget):
         self.addItem(mesh)
 
     def _get_visibility_state(self, x, y, z):
-        """
-        Returns:
-        0: Hidden (not used usually)
-        1: Background/Ghosted (Off-plane)
-        2: Active/Editable (On-plane or 3D mode)
-        """
         if self.active_view_plane is None:
             return 2
-            
+
         axis = self.active_view_plane['axis']
         val = self.active_view_plane['value']
-        tol = 0.001
         
+        tol = 0.005 
+
         current_val = {'x': x, 'y': y, 'z': z}[axis]
-        
+
         if abs(current_val - val) < tol:
-            return 2         
-        return 1             
+            return 2                    
+
+        return 1 if self.show_ghost_structure else 0
 
     def _draw_support_meshes(self, positions, s_type):
         """
@@ -1735,7 +1974,7 @@ class MCanvas3D(gl.GLViewWidget):
         for pt in candidates:
             vec = np.array([pt[0], pt[1], pt[2], 1.0])
             clip = np.dot(mvp_matrix, vec)
-            if clip[3] == 0: continue
+            if clip[3] <= 0: continue
             ndc_x = clip[0] / clip[3]
             ndc_y = clip[1] / clip[3]
             screen_x = (ndc_x + 1) * view_w / 2
@@ -2446,6 +2685,11 @@ class MCanvas3D(gl.GLViewWidget):
             
             if not is_drawing:
                 self.show_pivot_dot(True)
+                if hasattr(self, '_prev_mouse_pos'):
+                    dx = event.pos().x() - self._prev_mouse_pos.x()
+                    dy = event.pos().y() - self._prev_mouse_pos.y()
+                    self.camera.rotate(dx, dy)
+                self._prev_mouse_pos = event.pos()
                 super().mouseMoveEvent(event)
 
         else:
@@ -2729,9 +2973,16 @@ class MCanvas3D(gl.GLViewWidget):
     def _project_to_screen(self, x, y, z, mvp, w, h):
         vec = np.array([x, y, z, 1.0])
         clip = np.dot(mvp, vec)
-        if clip[3] == 0: return None
+        
+        if clip[3] <= 0: 
+            return None
+            
         ndc_x = clip[0] / clip[3]
         ndc_y = clip[1] / clip[3]
+        
+        if abs(ndc_x) > 2.0 or abs(ndc_y) > 2.0:
+            return None
+            
         screen_x = (ndc_x + 1) * w / 2
         screen_y = (1 - ndc_y) * h / 2
         return (screen_x, screen_y)
@@ -2862,8 +3113,6 @@ class MCanvas3D(gl.GLViewWidget):
         """
         Project every candidate grid segment to screen and return the (p1, p2)
         pair whose screen-space midpoint-to-line distance is smallest.
-        member_type: 'beam'  → horizontal X-dir and Y-dir segments
-                     'column'→ vertical Z-dir segments
         """
         if not self.current_model or not self.current_model.grid:
             return None
@@ -2875,12 +3124,20 @@ class MCanvas3D(gl.GLViewWidget):
         mvp = np.array((m_proj * m_view).data()).reshape(4, 4).T
 
         grids = self.current_model.grid
-        xs = sorted(grids.x_grids)
-        ys = sorted(grids.y_grids)
-        zs = sorted(grids.z_grids)
+
+        if self.active_view_plane:
+            val = self.active_view_plane['value']
+            axis = self.active_view_plane['axis']
+            xs = [val] if axis == 'x' else sorted(grids.x_grids)
+            ys = [val] if axis == 'y' else sorted(grids.y_grids)
+            zs = [val] if axis == 'z' else sorted(grids.z_grids)
+        else:
+            xs = sorted(grids.x_grids)
+            ys = sorted(grids.y_grids)
+            zs = sorted(grids.z_grids)
 
         best_seg  = None
-        best_dist = 18.0                         
+        best_dist = 18.0                        
 
         if member_type == 'column':
                                                                

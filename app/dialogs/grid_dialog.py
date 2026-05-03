@@ -1,4 +1,3 @@
-                            
 import math
 import re
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
@@ -200,6 +199,12 @@ class GridEditorDialog(QDialog):
         self.spin_bubble.valueChanged.connect(self.update_preview)
         bub_layout.addWidget(self.spin_bubble)
         right_panel.addLayout(bub_layout)
+
+        self._all_visible = True
+        self.btn_global_viz = QPushButton("Hide All Gridlines")
+        self.btn_global_viz.setToolTip("Toggle visibility of every gridline across all axes at once")
+        self.btn_global_viz.clicked.connect(self.toggle_all_axes_visibility)
+        right_panel.addWidget(self.btn_global_viz)
         
         right_panel.addStretch()
         
@@ -437,6 +442,20 @@ class GridEditorDialog(QDialog):
             "z": pack(self.z_data),
         }
     
+    def toggle_all_axes_visibility(self):
+        """Master toggle — hides or shows every gridline across all three axes."""
+        self._all_visible = not self._all_visible
+        target_text = "Yes" if self._all_visible else "No"
+        self.btn_global_viz.setText("Hide All Gridlines" if self._all_visible else "Show All Gridlines")
+
+        for tbl in (self.table_x['table'], self.table_y['table'], self.table_z['table']):
+            tbl.blockSignals(True)
+            for r in range(tbl.rowCount()):
+                tbl.setItem(r, 3, QTableWidgetItem(target_text))
+            tbl.blockSignals(False)
+
+        self.save_tables_to_data()
+
     def toggle_all_visibility(self, axis):
                                   
         if axis == 'x': tbl = self.table_x['table']
